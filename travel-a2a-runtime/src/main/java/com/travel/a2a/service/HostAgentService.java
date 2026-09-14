@@ -15,16 +15,20 @@ import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.openai.api.ResponseFormat;
 import org.springframework.scheduling.annotation.Async;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
+import java.net.ConnectException;
+import java.net.SocketTimeoutException;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeoutException;
 
 /**
  * 主Agent服务（协调者）
@@ -130,7 +134,7 @@ public class HostAgentService {
             // 6. 使用LLM优化行程
             String finalPlan = optimizeWithLLM(result, request);
             if (finalPlan == null || finalPlan.isBlank()) {
-                log.warn("LLM结构化计划未通过校验，使用确定性行程兜底");
+                log.warn("LLM结构化计划不可用，使用确定性行程兜底");
                 finalPlan = buildDeterministicPlan(result);
             }
 
@@ -182,6 +186,12 @@ public class HostAgentService {
                 log.warn("HostAgentService: 结构化计划校验失败, attempt={}, errors={}",
                         attempt, String.join("; ", repairErrors));
             } catch (Exception e) {
+                // 网络/供应商超时不是结构化校验失败；重发只会放大延迟和供应商压力。
+                if (isTransportFailure(e)) {
+                    log.warn("HostAgentService: LLM请求超时或暂时不可用，跳过修复重试");
+                    break;
+                }
+
                 // 不把供应商原始异常或模型原文回传给用户/模型，只给下一次修复一个稳定提示。
                 repairErrors = List.of("输出不是符合协议的 JSON，或无法反序列化为行程 DTO");
                 log.warn("HostAgentService: 结构化LLM输出不可用, attempt={}, causeType={}",
@@ -194,6 +204,20 @@ public class HostAgentService {
             if (partialPlan != null) return partialPlan;
         }
         return null;
+    }
+
+    private boolean isTransportFailure(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            if (current instanceof ResourceAccessException
+                    || current instanceof SocketTimeoutException
+                    || current instanceof ConnectException
+                    || current instanceof TimeoutException) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     private LlmItineraryPlan callStructuredPlan(TravelPlanResult result,

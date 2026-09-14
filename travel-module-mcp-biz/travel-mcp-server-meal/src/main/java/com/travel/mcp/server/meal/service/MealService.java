@@ -1,7 +1,6 @@
 package com.travel.mcp.server.meal.service;
 
 import io.netty.channel.ChannelOption;
-import io.netty.handler.timeout.ReadTimeoutHandler;
 import io.netty.handler.timeout.WriteTimeoutHandler;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -19,6 +18,7 @@ import java.util.concurrent.TimeUnit;
 public class MealService {
 
     private static final String RESTAURANT_TYPE = "餐饮服务";
+    private static final Duration RESPONSE_TIMEOUT = Duration.ofSeconds(7);
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(8);
 
     @Value("${travel.meal.poi-server-url}")
@@ -29,10 +29,9 @@ public class MealService {
     public MealService() {
         HttpClient httpClient = HttpClient.create()
                 .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 3_000)
-                .responseTimeout(REQUEST_TIMEOUT)
+                .responseTimeout(RESPONSE_TIMEOUT)
                 .doOnConnected(connection -> connection
-                        .addHandlerLast(new ReadTimeoutHandler(REQUEST_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS))
-                        .addHandlerLast(new WriteTimeoutHandler(REQUEST_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)));
+                        .addHandlerLast(new WriteTimeoutHandler(RESPONSE_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)));
         this.webClient = WebClient.builder()
                 .clientConnector(new ReactorClientHttpConnector(httpClient))
                 .build();

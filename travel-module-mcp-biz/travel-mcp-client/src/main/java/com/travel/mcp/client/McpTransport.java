@@ -12,7 +12,6 @@ import com.travel.mcp.protocol.jsonrpc.JsonRpcResponse;
 import com.travel.mcp.protocol.jsonrpc.McpProtocolException;
 import com.travel.mcp.protocol.util.JsonUtil;
 import io.netty.channel.ChannelOption;
-import io.netty.handler.timeout.ReadTimeoutHandler;
 import io.netty.handler.timeout.WriteTimeoutHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -55,14 +54,17 @@ public class McpTransport {
     public McpTransport(WebClient.Builder webClientBuilder, McpClientConfig config) {
         Duration connectTimeout = positive(config.getConnectTimeout(), Duration.ofSeconds(3));
         Duration responseTimeout = positive(config.getResponseTimeout(), Duration.ofSeconds(8));
-        this.requestTimeout = positive(config.getRequestTimeout(), Duration.ofSeconds(8));
+        Duration configuredRequestTimeout = positive(config.getRequestTimeout(), Duration.ofSeconds(9));
+        // 应用层超时要晚于网络读超时，避免同一请求由两个相同计时器同时终止。
+        this.requestTimeout = configuredRequestTimeout.compareTo(responseTimeout) > 0
+                ? configuredRequestTimeout
+                : responseTimeout.plusSeconds(1);
         this.serverInfoTimeout = positive(config.getServerInfoTimeout(), Duration.ofSeconds(3));
 
         HttpClient httpClient = HttpClient.create()
                 .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, toIntMillis(connectTimeout))
                 .responseTimeout(responseTimeout)
                 .doOnConnected(connection -> connection
-                        .addHandlerLast(new ReadTimeoutHandler(responseTimeout.toMillis(), TimeUnit.MILLISECONDS))
                         .addHandlerLast(new WriteTimeoutHandler(responseTimeout.toMillis(), TimeUnit.MILLISECONDS)));
 
         // SSE 连接只限制建连时间，不限制连接建立后的读空闲时间。

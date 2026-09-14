@@ -53,8 +53,7 @@ spring:
 
   # Spring AI 配置 (智谱GLM-4-Flash) - API Key 从 application-local.yaml 或 ENV 注入
   ai:
-    # 当前智谱 endpoint 在项目里 404，关闭重试让失败立刻回落到 deterministic 兜底解析，
-    # 避免每次回答都等待无谓的指数退避重试导致问卷"卡住"。
+    # 关闭自动重试；行程结构化修复由 HostAgentService 按校验结果显式控制。
     retry:
       max-attempts: 1
     openai:
@@ -86,7 +85,7 @@ travel:
     itinerary-url: ${ITINERARY_MCP_URL:http://localhost:8085}
     connect-timeout: ${MCP_CONNECT_TIMEOUT:3s}
     response-timeout: ${MCP_RESPONSE_TIMEOUT:8s}
-    request-timeout: ${MCP_REQUEST_TIMEOUT:8s}
+    request-timeout: ${MCP_REQUEST_TIMEOUT:9s}
     server-info-timeout: ${MCP_SERVER_INFO_TIMEOUT:3s}
   # 熔断器配置
   ratelimit:

@@ -13,7 +13,9 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.web.client.ResourceAccessException;
 
+import java.net.SocketTimeoutException;
 import java.util.*;
 
 @Slf4j
@@ -225,10 +227,31 @@ public class WeatherService {
 
         try {
             return fetchFromWttrIn(city);
+        } catch (ResourceAccessException e) {
+            if (isTimeout(e)) {
+                log.warn("天气上游请求超时，已降级: city={}", city);
+                return WeatherResponse.fallback("天气上游请求超时");
+            }
+            log.warn("天气上游暂时不可达，已降级: city={}, causeType={}",
+                    city, e.getClass().getSimpleName());
+            return WeatherResponse.fallback("天气上游暂时不可用");
         } catch (Exception e) {
-            log.error("天气查询失败: {}", e.getMessage(), e);
-            return WeatherResponse.fallback("天气查询失败: " + e.getMessage());
+            log.error("天气数据处理失败: city={}, causeType={}",
+                    city, e.getClass().getSimpleName(), e);
+            return WeatherResponse.fallback("天气数据处理失败");
         }
+    }
+
+    private boolean isTimeout(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            if (current instanceof SocketTimeoutException
+                    || current.getClass().getSimpleName().contains("Timeout")) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     @SuppressWarnings("unchecked")

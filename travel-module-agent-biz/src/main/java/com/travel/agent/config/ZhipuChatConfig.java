@@ -16,6 +16,7 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.retry.support.RetryTemplate;
 
 /**
  * 智谱清言 ChatModel。
@@ -88,6 +89,13 @@ public class ZhipuChatConfig {
                 restClientBuilder,
                 WebClient.builder(),
                 RetryUtils.DEFAULT_RESPONSE_ERROR_HANDLER);
-        return new OpenAiChatModel(api, options);
+
+        // 结构化行程的修复重试由 HostAgentService 仅在“响应可解析但校验失败”时控制。
+        // 手工创建 ChatModel 不会读取 spring.ai.retry.max-attempts，因此这里显式关闭
+        // Spring AI 默认的 10 次供应商重试，避免一次超时被放大成多次 HTTP 请求。
+        RetryTemplate noRetryTemplate = RetryTemplate.builder()
+                .maxAttempts(1)
+                .build();
+        return new OpenAiChatModel(api, options, null, noRetryTemplate);
     }
 }

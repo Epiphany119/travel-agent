@@ -50,9 +50,9 @@ public class McpClientConfig {
     private Duration responseTimeout = Duration.ofSeconds(8);
 
     /**
-     * MCP 普通请求的应用层超时。
+     * MCP 普通请求的应用层超时。比网络读超时多 1 秒，避免两个计时器同时结束。
      */
-    private Duration requestTimeout = Duration.ofSeconds(8);
+    private Duration requestTimeout = Duration.ofSeconds(9);
 
     /**
      * MCP Server 信息探测超时。探测失败不影响应用启动。

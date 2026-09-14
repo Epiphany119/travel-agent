@@ -20,7 +20,7 @@ travel:
     itinerary-url: ${ITINERARY_MCP_URL:http://localhost:8085}
     connect-timeout: ${MCP_CONNECT_TIMEOUT:3s}
     response-timeout: ${MCP_RESPONSE_TIMEOUT:8s}
-    request-timeout: ${MCP_REQUEST_TIMEOUT:8s}
+    request-timeout: ${MCP_REQUEST_TIMEOUT:9s}
     server-info-timeout: ${MCP_SERVER_INFO_TIMEOUT:3s}
 
 # A2A Runtime specific settings
