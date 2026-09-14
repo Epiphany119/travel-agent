@@ -3,6 +3,7 @@ package com.travel.mcp.server.poi.service;
 import com.travel.mcp.server.poi.model.AmapResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
@@ -17,10 +18,14 @@ public class DistanceService {
 
     private static final String DISTANCE_URL = "https://restapi.amap.com/v3/distance";
 
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final RestTemplate restTemplate;
 
     @Value("${travel.poi.amap-key:}")
     private String apiKey;
+
+    public DistanceService(@Qualifier("poiRestTemplate") RestTemplate restTemplate) {
+        this.restTemplate = restTemplate;
+    }
 
     public AmapResponse distance(String origins, String destination, Integer type) {
         if (apiKey == null || apiKey.isBlank()) {

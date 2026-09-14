@@ -2,15 +2,15 @@ package com.travel.agent.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.travel.agent.service.QuestionnaireService;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 
 /**
  * 问卷式旅行规划 Agent 控制器。
@@ -25,7 +25,6 @@ import java.util.concurrent.Executors;
 @Slf4j
 @RestController
 @RequestMapping("/api/agent/questionnaire")
-@RequiredArgsConstructor
 public class AgentQuestionnaireController {
 
     private static final long SSE_TIMEOUT = 120_000L;
@@ -33,7 +32,15 @@ public class AgentQuestionnaireController {
     private final QuestionnaireService questionnaireService;
     private final ObjectMapper objectMapper;
 
-    private final ExecutorService executor = Executors.newCachedThreadPool();
+    private final ExecutorService executor;
+
+    public AgentQuestionnaireController(QuestionnaireService questionnaireService,
+                                        ObjectMapper objectMapper,
+                                        @Qualifier("questionnaireExecutor") ExecutorService executor) {
+        this.questionnaireService = questionnaireService;
+        this.objectMapper = objectMapper;
+        this.executor = executor;
+    }
 
     /**
      * 创建会话
@@ -76,19 +83,24 @@ public class AgentQuestionnaireController {
         emitter.onError(t -> log.error("SSE 错误: sessionId={}", sessionId, t));
 
         // 异步执行，避免阻塞 SSE 响应
-        executor.execute(() -> {
-            try {
-                questionnaireService.handleAnswer(sessionId, step, safeAnswer, emitter);
-            } catch (Exception e) {
-                log.error("问卷问答处理异常: sessionId={}, step={}", sessionId, step, e);
+        try {
+            executor.execute(() -> {
                 try {
-                    emitter.send(SseEmitter.event().name("error")
-                            .data(objectMapper.writeValueAsString(Map.of("message", "服务器内部错误"))));
-                } catch (Exception ignored) {
+                    questionnaireService.handleAnswer(sessionId, step, safeAnswer, emitter);
+                } catch (Exception e) {
+                    log.error("问卷问答处理异常: sessionId={}, step={}", sessionId, step, e);
+                    try {
+                        emitter.send(SseEmitter.event().name("error")
+                                .data(objectMapper.writeValueAsString(Map.of("message", "服务器内部错误"))));
+                    } catch (Exception ignored) {
+                    }
+                    emitter.complete();
                 }
-                emitter.complete();
-            }
-        });
+            });
+        } catch (RejectedExecutionException e) {
+            log.warn("问卷执行器已满载，快速拒绝请求: sessionId={}, step={}", sessionId, step);
+            emitter.completeWithError(new IllegalStateException("服务繁忙，请稍后重试"));
+        }
 
         return emitter;
     }

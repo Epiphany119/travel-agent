@@ -8,6 +8,7 @@ import { subscribeA2AStream, fetchPoiImages, type TravelPlan } from '@/api/agent
 import { useStreamStore } from '@/stores/stream'
 import { useUserStore } from '@/stores/user'
 import roamlySymbol from '@/assets/brand/logo-app-icon.png'
+import { formatCost, normalizeOptionalCost } from '@/utils/planValues'
 
 const router = useRouter()
 const streamStore = useStreamStore()
@@ -72,27 +73,39 @@ const agentSteps = computed(() => [
   { icon: '↗', title: '路线优化', text: '按区域串联地点，减少折返与通勤' },
   { icon: '¥', title: '预算平衡', text: `控制在 ¥${budget.value.toLocaleString()} 总预算内` }
 ])
-const totalPlanCost = computed(() => structuredDays.value.flat().reduce((sum, item) => sum + (item.cost || 0), 0))
+const totalPlanCost = computed(() => structuredDays.value.flat()
+  .reduce((sum, item) => sum + (normalizeOptionalCost(item.cost) || 0), 0))
+const hasPlanActivities = computed(() => structuredDays.value.flat().length > 0)
+const hasUnknownPlanCost = computed(() => structuredDays.value.flat()
+  .some(item => normalizeOptionalCost(item.cost) === null))
+const confirmedPlanCost = computed(() => hasPlanActivities.value && !hasUnknownPlanCost.value
+  ? totalPlanCost.value : null)
 const scheduling = ref(false)
 async function addToSchedule(target: 'inspiration' | 'journey') {
   if (scheduling.value) return
   scheduling.value = true
   try {
     const result: any = travelPlan.value || { destination: destination.value }
-    const noteContent = { overview: { destination: result.destination || destination.value, preferences: preferenceSummary.value }, strategies: agentSteps.value.map(s => ({ title: s.title, text: s.text })), budget: { total: totalPlanCost.value || budget.value, items: [] }, days: structuredDays.value.map((items: any[], i: number) => ({ day: i + 1, items })), reminders: [], packing: [], reflections: {} }
-    await saveTravelNote({ userId: USER_ID, title: `${result.destination || destination.value} · ${days.value}日旅行计划`, destination: result.destination || destination.value, noteType: target, sourceType: 'agent', totalDays: days.value, travelers: travelers.value, budget: totalPlanCost.value || budget.value, contentJson: JSON.stringify(noteContent), status: target === 'journey' ? 'planned' : 'draft' })
+    const noteContent = {
+      overview: { destination: result.destination || destination.value, preferences: preferenceSummary.value },
+      strategies: agentSteps.value.map(s => ({ title: s.title, text: s.text })),
+      budget: { limit: budget.value, knownTotal: totalPlanCost.value, total: confirmedPlanCost.value, hasUnknownCosts: hasUnknownPlanCost.value, items: [] },
+      days: structuredDays.value.map((items: any[], i: number) => ({ day: i + 1, items })),
+      reminders: [], packing: [], reflections: {}
+    }
+    await saveTravelNote({ userId: USER_ID, title: `${result.destination || destination.value} · ${days.value}日旅行计划`, destination: result.destination || destination.value, noteType: target, sourceType: 'agent', totalDays: days.value, travelers: travelers.value, budget: budget.value, contentJson: JSON.stringify(noteContent), status: target === 'journey' ? 'planned' : 'draft' })
     if (target === 'inspiration') {
       const planMarkdown = structuredDays.value.map((items: any[], i: number) => {
-        const rows = items.map((a: any) => `- **${a.time || ''} ${a.name || ''}**\n  - 地点：${a.location || ''}\n  - 交通：${a.transport || ''}\n  - 备注：${a.notes || ''}\n  - 费用：¥${a.cost || 0}`).join('\n')
+        const rows = items.map((a: any) => `- **${a.time || ''} ${a.name || ''}**\n  - 地点：${a.location || ''}\n  - 交通：${a.transport || ''}\n  - 备注：${a.notes || ''}\n  - 费用：${formatCost(a.cost)}`).join('\n')
         return `## Day ${i + 1}\n${rows}`
       }).join('\n\n')
       const firstImage = structuredDays.value.flat().find((a: any) => a.image || a.imageUrl)?.image || structuredDays.value.flat().find((a: any) => a.imageUrl)?.imageUrl || ''
-      await addInspiration({ userId: USER_ID, name: result.destination || destination.value, imageUrl: firstImage, description: planMarkdown || 'Roamly 为你生成的旅行方案', quote: preferenceSummary.value, tags: 'AI规划,旅行计划', estimatedBudget: totalPlanCost.value || budget.value, status: 0 })
+      await addInspiration({ userId: USER_ID, name: result.destination || destination.value, imageUrl: firstImage, description: planMarkdown || 'Roamly 为你生成的旅行方案', quote: preferenceSummary.value, tags: 'AI规划,旅行计划', estimatedBudget: confirmedPlanCost.value, status: 0 })
     } else {
       const start = new Date(); start.setDate(start.getDate() + 1)
       const end = new Date(start); end.setDate(start.getDate() + days.value - 1)
       const points = structuredDays.value.flat().filter((a: any) => a.type === 'sightseeing').map((a: any, i: number) => ({ name: a.name, visitDate: a.time, description: a.notes || a.location, sortOrder: i }))
-      const created = await addJourney({ userId: USER_ID, destination: result.destination || destination.value, totalDays: days.value, startDate: start.toISOString().slice(0,10), endDate: end.toISOString().slice(0,10), totalCost: totalPlanCost.value || budget.value, summary: preferenceSummary.value, travelType: travelStyle.value, status: 1 })
+      const created = await addJourney({ userId: USER_ID, destination: result.destination || destination.value, totalDays: days.value, startDate: start.toISOString().slice(0,10), endDate: end.toISOString().slice(0,10), totalCost: confirmedPlanCost.value, summary: preferenceSummary.value, travelType: travelStyle.value, status: 1 })
       if (created.data?.id && points.length) await saveJourneyPoints(created.data.id, points)
     }
     ElMessage.success(target === 'inspiration' ? '已加入灵感目的地' : '已加入我的旅程')
@@ -107,18 +120,22 @@ const dayTabs = computed(() => {
     const md = [
       p.theme ? `## ${p.theme}` : '',
       p.date ? `**日期：** ${p.date}` : '',
-      p.morning ? `### 🌅 上午\n${p.morning.plan}\n\n⏱ ${p.morning.duration} · ¥${p.morning.budget}` : '',
-      p.afternoon ? `### ☀️ 下午\n${p.afternoon.plan}\n\n⏱ ${p.afternoon.duration} · ¥${p.afternoon.budget}` : '',
-      p.evening ? `### 🌙 晚上\n${p.evening.plan}\n\n⏱ ${p.evening.duration} · ¥${p.evening.budget}` : '',
+      p.morning ? `### 🌅 上午\n${p.morning.plan}\n\n⏱ ${p.morning.duration} · ${formatCost(p.morning.budget)}` : '',
+      p.afternoon ? `### ☀️ 下午\n${p.afternoon.plan}\n\n⏱ ${p.afternoon.duration} · ${formatCost(p.afternoon.budget)}` : '',
+      p.evening ? `### 🌙 晚上\n${p.evening.plan}\n\n⏱ ${p.evening.duration} · ${formatCost(p.evening.budget)}` : '',
       p.tips ? `### 💡 出行贴士\n${p.tips}` : '',
     ].filter(Boolean).join('\n\n')
-    const dayCost = (p.morning?.budget || 0) + (p.afternoon?.budget || 0) + (p.evening?.budget || 0)
+    const slotBudgets = [p.morning?.budget, p.afternoon?.budget, p.evening?.budget].filter((value) => value !== undefined)
+    const normalizedSlotBudgets = slotBudgets.map(normalizeOptionalCost)
+    const dayCost = normalizedSlotBudgets.length && normalizedSlotBudgets.every((value) => value !== null)
+      ? normalizedSlotBudgets.reduce<number>((sum, value) => sum + (value ?? 0), 0)
+      : null
     return {
       label: `Day ${p.dayNumber}`,
       subLabel: p.date || '',
       html: renderSafeMarkdown(md),
       weather: null,
-      budget: dayCost || null
+      budget: dayCost
     }
   })
 })
@@ -175,7 +192,7 @@ function normalizePlanActivity(activity: any) {
     time: activity?.time || '',
     transport: activity?.transport || activity?.travelMode || '',
     notes: activity?.notes || activity?.description || activity?.reason || '',
-    cost: Math.round(Number(activity?.cost || activity?.price || 0)),
+    cost: normalizeOptionalCost(activity?.cost ?? activity?.price),
     duration: Number(activity?.duration || 0),
   }
 }
@@ -283,7 +300,7 @@ async function generateStream() {
               plan: `${act.name}${act.location ? ' @ ' + act.location : ''}${act.notes ? ' - ' + act.notes : ''}`,
               duration: act.duration ? Math.round(act.duration / 60) + '小时' : '1小时',
               tips: act.notes || '',
-              budget: Math.round(act.cost || 0)
+              budget: normalizeOptionalCost(act.cost)
             } : undefined
 
             return {
@@ -310,7 +327,7 @@ async function generateStream() {
                 name: a.name || '',
                 description: a.notes || a.location || '',
                 duration: Math.round((a.duration || 0) / 60),
-                ticketPrice: Math.round(a.cost || 0)
+                ticketPrice: normalizeOptionalCost(a.cost)
               })),
             meals: (dp.activities || [])
               .filter((a: any) => a.type === 'meal')
@@ -318,7 +335,7 @@ async function generateStream() {
                 mealType: getMealType(a.time),
                 restaurantName: a.name || '',
                 cuisine: a.notes || '',
-                avgPrice: Math.round(a.cost || 0),
+                avgPrice: normalizeOptionalCost(a.cost),
                 reason: a.notes || ''
               }))
           }))
@@ -333,7 +350,7 @@ async function generateStream() {
             time: a.time || '',
             transport: a.transport || a.travelMode || '',
             notes: a.notes || '',
-            cost: Math.round(a.cost || 0),
+            cost: normalizeOptionalCost(a.cost),
             duration: a.duration ? Math.round(a.duration / 60) : 0
           })))
 
@@ -342,7 +359,7 @@ async function generateStream() {
             destination: destination.value,
             days: days.value,
             totalBudget: result.budget?.totalBudget || budget.value,
-            estimatedCost: result.budget?.totalBudget || budget.value,
+            estimatedCost: confirmedPlanCost.value,
             budgetStatus: result.budget?.success ? 'ok' : 'limited',
             overview: result.finalPlan || streamStore.fullText,
             travelTips: [],
@@ -532,7 +549,8 @@ function getMealType(time: string): string {
       <div v-if="dayTabs.length > 0" class="plan-section">
         <div class="plan-head">
           <div><p class="eyebrow">YOUR PERSONAL TRIP</p><h3>{{ destination }} · {{ dayTabs.length }}日慢旅行</h3><p class="plan-preferences">{{ preferenceSummary }}</p></div>
-          <span class="plan-cost" v-if="totalPlanCost">已规划 ¥{{ totalPlanCost.toLocaleString() }}</span>
+          <span class="plan-cost" v-if="confirmedPlanCost != null">已核验费用下限 ¥{{ confirmedPlanCost.toLocaleString() }}</span>
+          <span class="plan-cost plan-cost--pending" v-if="hasUnknownPlanCost">部分费用待确认</span>
           <div class="plan-actions">
             <button class="schedule-btn" :disabled="scheduling" @click="addToSchedule('inspiration')">✦ {{ scheduling ? '保存中…' : '存到灵感目的地' }}</button>
             <button class="schedule-btn schedule-btn--ghost" :disabled="scheduling" @click="addToSchedule('journey')">＋ 保存为我的旅程</button>
@@ -554,14 +572,14 @@ function getMealType(time: string): string {
               @click="activeDay = i"
             >
               <span class="tab-label">{{ tab.label }}</span>
-              <span v-if="tab.budget" class="tab-temp">¥{{ tab.budget }}</span>
+              <span v-if="tab.budget != null" class="tab-temp">¥{{ tab.budget }}</span>
             </button>
           </div>
 
           <!-- Tab 内容 -->
           <div v-if="dayTabs[activeDay]" class="tab-content">
             <div class="day-weather-row">
-              <div v-if="dayTabs[activeDay].budget" class="weather-chip budget-chip">
+              <div v-if="dayTabs[activeDay].budget != null" class="weather-chip budget-chip">
                 <span>💰</span>
                 <span>¥{{ dayTabs[activeDay].budget }}</span>
               </div>
@@ -583,9 +601,9 @@ function getMealType(time: string): string {
                   <div v-if="slot.location" class="itin-loc">📍 {{ slot.location }}</div>
                   <div v-if="slot.transport" class="itin-loc">↗ {{ slot.transport }}</div>
                   <div v-if="slot.notes" class="itin-note">{{ slot.notes }}</div>
-                  <div v-if="slot.cost || slot.duration" class="itin-meta">
+                  <div v-if="slot.cost != null || slot.duration" class="itin-meta">
                     <span v-if="slot.duration">⏱ {{ slot.duration }} 小时</span>
-                    <span v-if="slot.cost">¥{{ slot.cost }}</span>
+                    <span>{{ formatCost(slot.cost) }}</span>
                   </div>
                 </div>
               </div>
@@ -650,7 +668,7 @@ function getMealType(time: string): string {
               <div>
                 <h4>{{ attraction.name }}</h4>
                 <p>{{ attraction.description }}</p>
-                <small>游览约 {{ attraction.duration }} 小时 | 门票 ¥{{ attraction.ticketPrice }}</small>
+                <small>游览约 {{ attraction.duration }} 小时 | 门票 {{ formatCost(attraction.ticketPrice) }}</small>
               </div>
             </div>
           </div>
@@ -659,7 +677,7 @@ function getMealType(time: string): string {
             <div v-for="meal in travelPlan.dayPlans[activeDay].meals" :key="meal.mealType" class="meal">
               <span>{{ meal.mealType }}</span>
               <h4>{{ meal.restaurantName }}</h4>
-              <p>{{ meal.cuisine }} · 人均 ¥{{ meal.avgPrice }}</p>
+              <p>{{ meal.cuisine }} · 人均 {{ formatCost(meal.avgPrice) }}</p>
               <small>{{ meal.reason }}</small>
             </div>
           </div>

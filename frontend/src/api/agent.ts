@@ -47,11 +47,11 @@ export interface TravelPlanRequest {
 }
 
 export interface TravelPlan {
-  planId: string; destination: string; days: number; totalBudget: number; estimatedCost: number
+  planId: string; destination: string; days: number; totalBudget: number; estimatedCost: number | null
   budgetStatus: string; overview: string; travelTips: string[]; packingList: string[]
   dayPlans: Array<{ dayNumber: number; date: string; theme: string; dayBudget: number; transportation: string; notes: string
-    attractions: Array<{ name: string; description: string; duration: number; ticketPrice: number }>
-    meals: Array<{ mealType: string; restaurantName: string; cuisine: string; avgPrice: number; reason: string }>
+    attractions: Array<{ name: string; description: string; duration: number; ticketPrice: number | null }>
+    meals: Array<{ mealType: string; restaurantName: string; cuisine: string; avgPrice: number | null; reason: string }>
   }>
 }
 
@@ -117,9 +117,9 @@ export interface StreamDayPlanEvent {
     dayNumber: number
     theme: string
     date: string
-    morning?: { plan: string; duration: string; tips?: string; budget: number }
-    afternoon?: { plan: string; duration: string; tips?: string; budget: number }
-    evening?: { plan: string; duration: string; tips?: string; budget: number }
+    morning?: { plan: string; duration: string; tips?: string; budget: number | null }
+    afternoon?: { plan: string; duration: string; tips?: string; budget: number | null }
+    evening?: { plan: string; duration: string; tips?: string; budget: number | null }
     tips?: string
   }
 }

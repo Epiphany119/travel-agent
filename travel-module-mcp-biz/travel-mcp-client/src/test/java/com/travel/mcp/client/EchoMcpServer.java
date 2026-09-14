@@ -121,6 +121,7 @@ public class EchoMcpServer {
             exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
             exchange.getResponseHeaders().set("Cache-Control", "no-cache");
             exchange.getResponseHeaders().set("Connection", "keep-alive");
+            exchange.sendResponseHeaders(200, 0);
 
             // Send SSE events
             try {

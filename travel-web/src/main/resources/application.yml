@@ -84,6 +84,10 @@ travel:
     meal-url: ${MEAL_MCP_URL:http://localhost:8083}
     budget-url: ${BUDGET_MCP_URL:http://localhost:8084}
     itinerary-url: ${ITINERARY_MCP_URL:http://localhost:8085}
+    connect-timeout: ${MCP_CONNECT_TIMEOUT:3s}
+    response-timeout: ${MCP_RESPONSE_TIMEOUT:8s}
+    request-timeout: ${MCP_REQUEST_TIMEOUT:8s}
+    server-info-timeout: ${MCP_SERVER_INFO_TIMEOUT:3s}
   # 熔断器配置
   ratelimit:
     enabled: true
@@ -114,6 +118,13 @@ gaode:
   api-key: ${GAODE_API_KEY:}
   enabled: true
   daily-limit: 4700
+
+# A2A 编排分层超时
+a2a:
+  runtime:
+    tool-timeout: ${A2A_TOOL_TIMEOUT:10s}
+    aggregate-timeout: ${A2A_AGGREGATE_TIMEOUT:30s}
+    sse-timeout: ${A2A_SSE_TIMEOUT:5m}
 
 # 日志
 logging:

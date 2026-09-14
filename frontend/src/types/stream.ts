@@ -3,7 +3,8 @@ export interface DayPlanSlot {
   plan: string
   duration: string
   tips?: string
-  budget: number
+  /** null means the provider did not return a verifiable price. */
+  budget: number | null
 }
 
 export interface DayPlan {

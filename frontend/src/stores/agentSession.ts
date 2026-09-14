@@ -6,6 +6,7 @@ import { subscribeA2AStream, fetchPoiImages } from '@/api/agent'
 import { useStreamStore } from './stream'
 import { useRouter } from 'vue-router'
 import { useRightPanelStore } from './rightPanel'
+import { normalizeOptionalCost } from '@/utils/planValues'
 
 export interface ChatMsg {
   role: 'agent' | 'user' | 'tool' | 'info'
@@ -48,6 +49,16 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
   const currentActivities = computed(
     () => plan.value?.dayPlans?.[activeDay.value]?.activities || []
   )
+
+  // 只把工具返回的真实、非负金额纳入已核验费用；null/非法值保持“待确认”。
+  const verifiedPlanCost = computed<number | null>(() => {
+    const activities = (plan.value?.dayPlans || []).flatMap((day: any) => day.activities || [])
+    if (!activities.length || activities.some((activity: any) => normalizeOptionalCost(activity?.cost) === null)) {
+      return null
+    }
+    return activities.reduce((sum: number, activity: any) =>
+      sum + (normalizeOptionalCost(activity?.cost) ?? 0), 0)
+  })
 
   const dayTabs = computed(() => {
     if (!plan.value) return []
@@ -196,7 +207,7 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
       location: activity?.location || activity?.address || '',
       time: activity?.time || '',
       notes: activity?.notes || activity?.description || activity?.reason || '',
-      cost: Number(activity?.cost || activity?.price || 0),
+      cost: normalizeOptionalCost(activity?.cost ?? activity?.price),
       duration: Number(activity?.duration || 0),
     }
   }
@@ -341,7 +352,7 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
     stepIndex, answers,
     // computed
     currentQuestion, meta, optionChips,
-    currentActivities, dayTabs, overview, dayOverview, globalWeather,
+    currentActivities, verifiedPlanCost, dayTabs, overview, dayOverview, globalWeather,
     // methods
     startQuestionnaire, reset, selectOption, send,
     push, greet, renderMarkdown,

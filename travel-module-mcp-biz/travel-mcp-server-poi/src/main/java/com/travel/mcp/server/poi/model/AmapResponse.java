@@ -65,6 +65,7 @@ public class AmapResponse {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class PoiInfo {
+        private String id;
         private String name;
         private String location;
         private String address;

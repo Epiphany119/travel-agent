@@ -16,6 +16,12 @@ import lombok.NoArgsConstructor;
 public class MealResult {
 
     /**
+     * 外部餐厅的稳定标识，用于约束 LLM 只能选择候选集中的地点。
+     */
+    @JsonProperty("placeId")
+    private String placeId;
+
+    /**
      * 餐厅名称
      */
     @JsonProperty("name")

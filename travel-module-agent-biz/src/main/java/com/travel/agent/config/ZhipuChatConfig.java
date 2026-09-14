@@ -1,5 +1,6 @@
 package com.travel.agent.config;
 
+import com.travel.common.http.HttpClientSupport;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
@@ -63,6 +64,7 @@ public class ZhipuChatConfig {
 
         // 构建带拦截器的 RestClient，用于诊断 Authorization 头是否正确设置
         RestClient.Builder restClientBuilder = RestClient.builder()
+                .requestFactory(HttpClientSupport.newRequestFactory())
                 .requestInterceptor((HttpRequest request, byte[] body, ClientHttpRequestExecution execution) -> {
                     String auth = request.getHeaders().getFirst("Authorization");
                     String method = request.getMethod() != null ? request.getMethod().name() : "GET";

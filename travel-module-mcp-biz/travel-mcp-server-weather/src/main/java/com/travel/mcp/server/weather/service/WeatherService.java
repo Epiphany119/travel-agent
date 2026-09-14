@@ -12,6 +12,7 @@ import org.springframework.web.client.RestTemplate;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
+import org.springframework.beans.factory.annotation.Qualifier;
 
 import java.util.*;
 
@@ -207,8 +208,12 @@ public class WeatherService {
             Map.entry("vrb", "无固定风向")
     );
 
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    public WeatherService(@Qualifier("weatherRestTemplate") RestTemplate restTemplate) {
+        this.restTemplate = restTemplate;
+    }
 
     @Value("${travel.weather.amap-key:}")
     private String amapKey;
@@ -286,9 +291,9 @@ public class WeatherService {
             JsonNode hourlyNode = dayNode.get("hourly");
             String desc = null;
             String windDir = null;
-            int humidity = 0;
-            double precip = 0.0;
-            int uvIndex = 0;
+            Integer humidity = null;
+            Double precip = null;
+            Integer uvIndex = null;
             if (hourlyNode != null && hourlyNode.isArray()) {
                 for (JsonNode hourNode : hourlyNode) {
                     String timeStr = hourNode.has("time") ? hourNode.get("time").asText() : "";
@@ -302,11 +307,11 @@ public class WeatherService {
                         JsonNode wdNode = hourNode.get("winddir16Point");
                         windDir = wdNode != null ? wdNode.asText() : null;
                         JsonNode humNode = hourNode.get("humidity");
-                        humidity = humNode != null ? humNode.asInt() : 0;
+                        humidity = humNode != null && !humNode.isNull() ? humNode.asInt() : null;
                         JsonNode prNode = hourNode.get("precipInches");
-                        precip = prNode != null ? prNode.asDouble() : 0.0;
+                        precip = prNode != null && !prNode.isNull() ? prNode.asDouble() : null;
                         JsonNode uvNode = hourNode.get("uvIndex");
-                        uvIndex = uvNode != null ? uvNode.asInt() : 0;
+                        uvIndex = uvNode != null && !uvNode.isNull() ? uvNode.asInt() : null;
                         if (timeVal == 1200) break;
                     }
                 }
@@ -380,7 +385,7 @@ public class WeatherService {
     }
 
     private Integer parseInt(String value) {
-        if (value == null) return 0;
-        try { return Integer.parseInt(value); } catch (NumberFormatException e) { return 0; }
+        if (value == null || value.isBlank()) return null;
+        try { return Integer.parseInt(value); } catch (NumberFormatException e) { return null; }
     }
 }

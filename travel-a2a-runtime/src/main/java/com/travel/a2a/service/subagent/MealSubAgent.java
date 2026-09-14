@@ -156,6 +156,8 @@ public class MealSubAgent {
             for (Object item : list) {
                 if (item instanceof Map<?, ?> map) {
                     MealResult meal = MealResult.builder()
+                            .placeId(normalizePlaceId("meal", map.get("placeId") != null
+                                    ? map.get("placeId") : map.get("id")))
                             .name(getStr(map, "name"))
                             .address(getStr(map, "address"))
                             .cuisine(getStr(map, "cuisine"))
@@ -168,6 +170,12 @@ public class MealSubAgent {
         }
 
         return meals;
+    }
+
+    private static String normalizePlaceId(String source, Object value) {
+        if (value == null || value.toString().isBlank()) return null;
+        String id = value.toString().trim();
+        return id.startsWith(source + ":") ? id : source + ":" + id;
     }
 
     /** 安全提取嵌套字段，支持双重嵌套结构 */

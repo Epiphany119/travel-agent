@@ -186,6 +186,8 @@ public class PoiSubAgent {
             for (Object item : list) {
                 if (item instanceof Map<?, ?> map) {
                     pois.add(PoiResult.builder()
+                            .placeId(normalizePlaceId("poi", map.get("placeId") != null
+                                    ? map.get("placeId") : map.get("id")))
                             .name(getStr(map, "name"))
                             .address(getStr(map, "address"))
                             .type(getStr(map, "type"))
@@ -198,6 +200,12 @@ public class PoiSubAgent {
             }
         }
         return pois;
+    }
+
+    private static String normalizePlaceId(String source, Object value) {
+        if (value == null || value.toString().isBlank()) return null;
+        String id = value.toString().trim();
+        return id.startsWith(source + ":") ? id : source + ":" + id;
     }
 
     @SuppressWarnings("unchecked")

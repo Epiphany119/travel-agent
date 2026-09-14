@@ -2,6 +2,7 @@ package com.travel.common.tool;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.travel.common.exception.RateLimitException;
+import com.travel.common.http.HttpClientSupport;
 import com.travel.common.ratelimit.RateLimitService;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -406,7 +407,7 @@ public class WeatherTool implements Function<WeatherTool.WeatherRequest, Weather
     @Autowired(required = false)
     private RateLimitService rateLimitService;
 
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final RestTemplate restTemplate = HttpClientSupport.newRestTemplate();
 
     @Override
     public WeatherResponse apply(WeatherRequest request) {
@@ -436,7 +437,7 @@ public class WeatherTool implements Function<WeatherTool.WeatherRequest, Weather
         String url = "https://wttr.in/" + pinyin + "?format=j1";
         log.info("调用 wttr.in: {}", url);
 
-        org.springframework.web.client.RestTemplate wttrTemplate = new org.springframework.web.client.RestTemplate();
+        org.springframework.web.client.RestTemplate wttrTemplate = HttpClientSupport.newRestTemplate();
         org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
         headers.set("Accept", "application/json");
         org.springframework.http.HttpEntity<String> entity = new org.springframework.http.HttpEntity<>(headers);
@@ -491,9 +492,9 @@ public class WeatherTool implements Function<WeatherTool.WeatherRequest, Weather
             com.fasterxml.jackson.databind.JsonNode hourlyNode = dayNode.get("hourly");
             String desc = null;
             String windDir = null;
-            int humidity = 0;
-            double precip = 0.0;
-            int uvIndex = 0;
+            Integer humidity = null;
+            Double precip = null;
+            Integer uvIndex = null;
             if (hourlyNode != null && hourlyNode.isArray()) {
                 for (com.fasterxml.jackson.databind.JsonNode hourNode : hourlyNode) {
                     String timeStr = hourNode.has("time") ? hourNode.get("time").asText() : "";
@@ -507,11 +508,11 @@ public class WeatherTool implements Function<WeatherTool.WeatherRequest, Weather
                         com.fasterxml.jackson.databind.JsonNode wdNode = hourNode.get("winddir16Point");
                         windDir = wdNode != null ? wdNode.asText() : null;
                         com.fasterxml.jackson.databind.JsonNode humNode = hourNode.get("humidity");
-                        humidity = humNode != null ? humNode.asInt() : 0;
+                        humidity = humNode != null && !humNode.isNull() ? humNode.asInt() : null;
                         com.fasterxml.jackson.databind.JsonNode prNode = hourNode.get("precipInches");
-                        precip = prNode != null ? prNode.asDouble() : 0.0;
+                        precip = prNode != null && !prNode.isNull() ? prNode.asDouble() : null;
                         com.fasterxml.jackson.databind.JsonNode uvNode = hourNode.get("uvIndex");
-                        uvIndex = uvNode != null ? uvNode.asInt() : 0;
+                        uvIndex = uvNode != null && !uvNode.isNull() ? uvNode.asInt() : null;
                         if (timeVal == 1200) break;
                     }
                 }
@@ -634,16 +635,16 @@ public class WeatherTool implements Function<WeatherTool.WeatherRequest, Weather
     }
 
     private Integer parseInt(Object value) {
-        if (value == null) return 0;
+        if (value == null) return null;
         if (value instanceof Integer) return (Integer) value;
-        try { return Integer.parseInt(value.toString()); } catch (NumberFormatException e) { return 0; }
+        try { return Integer.parseInt(value.toString()); } catch (NumberFormatException e) { return null; }
     }
 
     private Double parseDouble(Object value) {
-        if (value == null) return 0.0;
+        if (value == null) return null;
         if (value instanceof Double) return (Double) value;
         if (value instanceof Integer) return ((Integer) value).doubleValue();
-        try { return Double.parseDouble(value.toString()); } catch (NumberFormatException e) { return 0.0; }
+        try { return Double.parseDouble(value.toString()); } catch (NumberFormatException e) { return null; }
     }
 
     @Data

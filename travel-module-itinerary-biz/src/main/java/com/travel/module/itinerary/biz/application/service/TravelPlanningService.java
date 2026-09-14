@@ -27,13 +27,12 @@ public class TravelPlanningService {
         String city = request.getDestination().trim();
         List<String> warnings = new ArrayList<>();
         WeatherTool.WeatherResponse weather = queryWeather(city, warnings);
-        List<PoiTool.PoiInfo> attractions = Collections.emptyList();
-        List<PoiTool.PoiInfo> restaurants = Collections.emptyList();
-        // TODO: 高德 POI 暂时禁用，等和风天气调通后再开启
-        // List<PoiTool.PoiInfo> attractions = queryPoi(city, attractionKeyword(request), warnings);
-        // List<PoiTool.PoiInfo> restaurants = queryPoi(city, restaurantKeyword(request), warnings);
+        // 景点和餐饮必须来自真实 POI 候选；查询失败时由 queryPoi 返回空列表并记录告警，
+        // 不再静默关闭 POI 让上层误以为“没有推荐结果”。
+        List<PoiTool.PoiInfo> attractions = queryPoi(city, attractionKeyword(request), warnings);
+        List<PoiTool.PoiInfo> restaurants = queryPoi(city, restaurantKeyword(request), warnings);
         List<DayPlanResponse> dayPlans = buildDays(request, attractions, restaurants, weather);
-        double estimatedCost = estimateCost(request.getBudget(), attractions, restaurants);
+        Double estimatedCost = estimateCost();
 
         return TravelPlanResponse.builder()
                 .planId("TP-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase())
@@ -184,9 +183,10 @@ public class TravelPlanningService {
         return "请按实时体感调整衣物。";
     }
 
-    private double estimateCost(double budget, List<PoiTool.PoiInfo> attractions, List<PoiTool.PoiInfo> restaurants) {
-        // Neither provider returns reliable ticket/restaurant prices; do not fabricate a total.
-        return 0D;
+    private Double estimateCost() {
+        // Neither provider returns reliable ticket/restaurant prices; null means unknown.
+        // Zero would incorrectly communicate that the itinerary is free.
+        return null;
     }
 
     private String composeAddress(PoiTool.PoiInfo poi) {

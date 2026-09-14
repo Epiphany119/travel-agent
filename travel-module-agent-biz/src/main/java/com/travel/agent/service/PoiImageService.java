@@ -1,6 +1,7 @@
 package com.travel.agent.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.travel.common.http.HttpClientSupport;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -26,7 +27,7 @@ public class PoiImageService {
     private static final String DETAIL_URL = "https://restapi.amap.com/v3/place/detail";
     private static final int MAX_IMAGES = 3;
 
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final RestTemplate restTemplate = HttpClientSupport.newRestTemplate();
 
     @Value("${gaode.api-key:}")
     private String apiKey;

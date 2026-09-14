@@ -14,7 +14,7 @@ export function getCurrentUserId(): string {
 export interface Inspiration {
   id?: number; userId?: string; name: string; imageUrl?: string
   quote?: string; description?: string; tags?: string; priority?: number
-  estimatedBudget?: number; bestSeason?: string; status?: number; sortOrder?: number
+  estimatedBudget?: number | null; bestSeason?: string; status?: number; sortOrder?: number
   createdAt?: string
 }
 
@@ -43,7 +43,7 @@ export interface JourneyImage {
 export interface Journey {
   id?: number; userId?: string; destination: string; departureCity?: string
   startDate?: string; endDate?: string; totalDays?: number; summary?: string
-  totalCost?: number; rating?: number; travelType?: string; companions?: string
+  totalCost?: number | null; rating?: number; travelType?: string; companions?: string
   weatherInfo?: string; highlight?: string; tips?: string; status?: number; createdAt?: string
 }
 export interface JourneyDetail { journey: Journey; points: JourneyPoint[]; images: JourneyImage[] }
@@ -69,7 +69,7 @@ export interface TravelNote {
   noteType?: 'inspiration'|'journey'; sourceType?: string; sourceId?: number
   templateVersion?: number; status?: string; visibility?: 'private'|'link'
   shareToken?: string; coverUrl?: string; startDate?: string; endDate?: string
-  totalDays?: number; travelers?: number; budget?: number; contentJson: string
+  totalDays?: number; travelers?: number; budget?: number | null; contentJson: string
 }
 export function listTravelNotes() { return request.get<unknown, ApiResult<TravelNote[]>>('/user/travel-notes', { params: { userId: getCurrentUserId() } }) }
 export function getTravelNote(id: number) { return request.get<unknown, ApiResult<TravelNote>>('/user/travel-notes/' + id) }

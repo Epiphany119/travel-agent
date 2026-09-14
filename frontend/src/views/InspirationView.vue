@@ -137,7 +137,7 @@ async function remove(item: Inspiration) {
 
 const seasonOptions = ['不限', '春季', '夏季', '秋季', '冬季']
 const statusText = (s?: number) => (s === 0 ? '待规划' : '已规划')
-const budgetText = (b?: number) => (b ? `¥${b.toLocaleString()}` : '—')
+const budgetText = (b?: number | null) => (b == null ? '费用待确认' : `¥${b.toLocaleString()}`)
 const renderMarkdown = (value?: string) => renderSafeMarkdown(value)
 
 // 无图片时生成柔和的渐变占位背景，避免一片死灰
@@ -188,7 +188,7 @@ onMounted(load)
           <p class="desc" v-if="item.description">{{ item.description }}</p>
           <div class="meta">
             <span v-if="item.bestSeason">🍂 {{ item.bestSeason }}</span>
-            <span v-if="item.estimatedBudget">{{ budgetText(item.estimatedBudget) }}</span>
+            <span v-if="item.estimatedBudget != null">{{ budgetText(item.estimatedBudget) }}</span>
           </div>
           <div class="tags" v-if="item.tags">
             <span v-for="t in item.tags.split(',')" :key="t" class="chip">{{ t }}</span>

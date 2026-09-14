@@ -11,17 +11,24 @@ import com.travel.mcp.protocol.jsonrpc.JsonRpcRequest;
 import com.travel.mcp.protocol.jsonrpc.JsonRpcResponse;
 import com.travel.mcp.protocol.jsonrpc.McpProtocolException;
 import com.travel.mcp.protocol.util.JsonUtil;
+import io.netty.channel.ChannelOption;
+import io.netty.handler.timeout.ReadTimeoutHandler;
+import io.netty.handler.timeout.WriteTimeoutHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
+import reactor.netty.http.client.HttpClient;
 
 import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 /**
  * MCP 传输层。
@@ -34,11 +41,50 @@ public class McpTransport {
     private static final Logger log = LoggerFactory.getLogger(McpTransport.class);
 
     private final WebClient webClient;
+    private final WebClient streamingWebClient;
+    private final Duration requestTimeout;
+    private final Duration serverInfoTimeout;
 
+    /**
+     * 创建带分层超时的 MCP HTTP 客户端。
+     *
+     * <p>普通请求使用连接、响应读取、应用层三层超时；SSE 使用独立客户端，
+     * 不设置读空闲超时，避免服务端暂时没有事件时误断开长连接。</p>
+     */
+    @Autowired
+    public McpTransport(WebClient.Builder webClientBuilder, McpClientConfig config) {
+        Duration connectTimeout = positive(config.getConnectTimeout(), Duration.ofSeconds(3));
+        Duration responseTimeout = positive(config.getResponseTimeout(), Duration.ofSeconds(8));
+        this.requestTimeout = positive(config.getRequestTimeout(), Duration.ofSeconds(8));
+        this.serverInfoTimeout = positive(config.getServerInfoTimeout(), Duration.ofSeconds(3));
+
+        HttpClient httpClient = HttpClient.create()
+                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, toIntMillis(connectTimeout))
+                .responseTimeout(responseTimeout)
+                .doOnConnected(connection -> connection
+                        .addHandlerLast(new ReadTimeoutHandler(responseTimeout.toMillis(), TimeUnit.MILLISECONDS))
+                        .addHandlerLast(new WriteTimeoutHandler(responseTimeout.toMillis(), TimeUnit.MILLISECONDS)));
+
+        // SSE 连接只限制建连时间，不限制连接建立后的读空闲时间。
+        HttpClient streamingHttpClient = HttpClient.create()
+                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, toIntMillis(connectTimeout));
+
+        this.webClient = buildClient(webClientBuilder.clone(), httpClient);
+        this.streamingWebClient = buildClient(webClientBuilder.clone(), streamingHttpClient);
+    }
+
+    /**
+     * 保留一个参数构造器，方便非 Spring 场景和轻量单元测试直接创建传输层。
+     */
     public McpTransport(WebClient.Builder webClientBuilder) {
-        this.webClient = webClientBuilder
-            .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(16 * 1024 * 1024))
-            .build();
+        this(webClientBuilder, new McpClientConfig());
+    }
+
+    private WebClient buildClient(WebClient.Builder builder, HttpClient httpClient) {
+        return builder
+                .clientConnector(new ReactorClientHttpConnector(httpClient))
+                .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(16 * 1024 * 1024))
+                .build();
     }
 
     /**
@@ -61,7 +107,7 @@ public class McpTransport {
             .bodyValue(req)
             .retrieve()
             .bodyToMono(String.class)
-            .timeout(Duration.ofSeconds(30))
+            .timeout(requestTimeout)
             .block();
     }
 
@@ -110,7 +156,7 @@ public class McpTransport {
     public Flux<A2AStreamEvent> subscribeSse(String serverUrl, String taskId) {
         log.info("Subscribing to SSE stream: server={}, taskId={}", serverUrl, taskId);
 
-        return webClient.get()
+        return streamingWebClient.get()
             .uri(serverUrl + "/mcp/stream/" + taskId)
             .accept(MediaType.TEXT_EVENT_STREAM)
             .retrieve()
@@ -143,7 +189,7 @@ public class McpTransport {
             .uri(serverUrl + "/mcp/info")
             .retrieve()
             .bodyToMono(String.class)
-            .timeout(Duration.ofSeconds(10))
+            .timeout(serverInfoTimeout)
             .block();
 
         log.debug("Received server info from {}: {}", serverUrl, response);
@@ -176,6 +222,15 @@ public class McpTransport {
             spec.contentType(MediaType.APPLICATION_JSON).bodyValue(body);
         }
 
-        return spec.retrieve().bodyToMono(String.class).timeout(Duration.ofSeconds(30)).block();
+        return spec.retrieve().bodyToMono(String.class).timeout(requestTimeout).block();
+    }
+
+    private static Duration positive(Duration candidate, Duration fallback) {
+        return candidate == null || candidate.isZero() || candidate.isNegative() ? fallback : candidate;
+    }
+
+    private static int toIntMillis(Duration duration) {
+        long millis = duration.toMillis();
+        return (int) Math.min(Integer.MAX_VALUE, Math.max(1L, millis));
     }
 }

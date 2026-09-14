@@ -84,6 +84,12 @@ public class DayPlan {
         private String name;
 
         /**
+         * 关联的候选地点标识；休息等非地点活动可以为空。
+         */
+        @JsonProperty("placeId")
+        private String placeId;
+
+        /**
          * 地点
          */
         @JsonProperty("location")
@@ -106,8 +112,10 @@ public class DayPlan {
 
         /**
          * 费用
+         *
+         * <p>没有真实费用来源时保持 {@code null}，不能用 0 伪装成免费。</p>
          */
         @JsonProperty("cost")
-        private double cost;
+        private Double cost;
     }
 }

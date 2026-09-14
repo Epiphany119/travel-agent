@@ -1,17 +1,25 @@
 package com.travel.mcp.server.meal.service;
 
+import io.netty.channel.ChannelOption;
+import io.netty.handler.timeout.ReadTimeoutHandler;
+import io.netty.handler.timeout.WriteTimeoutHandler;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
+import reactor.netty.http.client.HttpClient;
 
+import java.time.Duration;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Service
 public class MealService {
 
     private static final String RESTAURANT_TYPE = "餐饮服务";
+    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(8);
 
     @Value("${travel.meal.poi-server-url}")
     private String poiServerUrl;
@@ -19,7 +27,15 @@ public class MealService {
     private final WebClient webClient;
 
     public MealService() {
-        this.webClient = WebClient.builder().build();
+        HttpClient httpClient = HttpClient.create()
+                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 3_000)
+                .responseTimeout(REQUEST_TIMEOUT)
+                .doOnConnected(connection -> connection
+                        .addHandlerLast(new ReadTimeoutHandler(REQUEST_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS))
+                        .addHandlerLast(new WriteTimeoutHandler(REQUEST_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)));
+        this.webClient = WebClient.builder()
+                .clientConnector(new ReactorClientHttpConnector(httpClient))
+                .build();
     }
 
     @SuppressWarnings("unchecked")
@@ -55,6 +71,7 @@ public class MealService {
                     .bodyValue(requestBody)
                     .retrieve()
                     .bodyToMono(String.class)
+                    .timeout(REQUEST_TIMEOUT)
                     .block();
 
             log.info("POI Server response: {}", response);

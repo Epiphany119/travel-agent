@@ -10,11 +10,13 @@ import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Flux;
 
 import java.util.List;
+import java.util.concurrent.TimeoutException;
 
 /**
  * 单个 MCP Server 的会话封装。
  * 
- * <p>提供工具调用接口，包含重试和错误处理逻辑。
+ * <p>提供工具调用接口和错误处理逻辑。重试不在会话层自动执行，避免超时请求被放大；
+ * 如需重试，应由上层针对幂等且可恢复的错误，在总截止时间内显式控制。
  * 实例由 {@link McpClient} 的 {@code @Bean} 方法统一创建，请勿直接使用 {@code @Component} 注入。</p>
  */
 public class McpSession {
@@ -68,8 +70,10 @@ public class McpSession {
             }
             return result;
         } catch (Exception e) {
-            log.error("Tool call error: server={}, tool={}", serverName, toolCall.name(), e);
-            return McpToolResult.failure(toolCall.name(), e.getMessage());
+            String message = isTimeout(e) ? "MCP 请求超时" : "MCP 工具调用失败";
+            log.warn("Tool call error: server={}, tool={}, reason={}",
+                    serverName, toolCall.name(), message);
+            return McpToolResult.failure(toolCall.name(), message);
         }
     }
 
@@ -129,5 +133,17 @@ public class McpSession {
      */
     public McpToolResult callTool(String toolName, java.util.Map<String, Object> arguments) {
         return callTool(new McpToolCall(toolName, arguments));
+    }
+
+    private boolean isTimeout(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            if (current instanceof TimeoutException
+                    || current.getClass().getSimpleName().contains("Timeout")) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 }

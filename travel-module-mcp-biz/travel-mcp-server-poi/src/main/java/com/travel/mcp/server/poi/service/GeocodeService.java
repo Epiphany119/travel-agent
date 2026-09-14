@@ -3,6 +3,7 @@ package com.travel.mcp.server.poi.service;
 import com.travel.mcp.server.poi.model.AmapResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
@@ -16,10 +17,14 @@ public class GeocodeService {
     private static final String GEOCODE_URL = "https://restapi.amap.com/v3/geocode/geo";
     private static final String REGEO_URL = "https://restapi.amap.com/v3/geocode/regeo";
 
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final RestTemplate restTemplate;
 
     @Value("${travel.poi.amap-key:}")
     private String apiKey;
+
+    public GeocodeService(@Qualifier("poiRestTemplate") RestTemplate restTemplate) {
+        this.restTemplate = restTemplate;
+    }
 
     public AmapResponse geocode(String address, String city) {
         if (apiKey == null || apiKey.isBlank()) {

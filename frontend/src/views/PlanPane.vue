@@ -2,6 +2,7 @@
 import { useAgentSessionStore } from '@/stores/agentSession'
 import { addInspiration, getCurrentUserId } from '@/api/user'
 import { ref } from 'vue'
+import { formatCost } from '@/utils/planValues'
 const agent = useAgentSessionStore()
 const savingInspiration = ref(false)
 const savedInspiration = ref(false)
@@ -15,10 +16,11 @@ async function savePlanAsInspiration() {
       userId: getCurrentUserId(),
       name: agent.plan.destination || '未命名目的地',
       imageUrl: firstImage,
-      quote: `${agent.plan.days || agent.dayTabs.length} 天 · ¥${(agent.plan.budget || 0).toLocaleString()}`,
+      quote: `${agent.plan.days || agent.dayTabs.length} 天 · ${agent.verifiedPlanCost == null ? '费用待确认' : `已核验费用下限 ${formatCost(agent.verifiedPlanCost)}`}`,
       description: agent.overview || 'Roamly AI 为你生成的旅行计划',
       tags: 'AI规划,旅行计划',
-      estimatedBudget: Number(agent.plan.budget || 0),
+      // agent.plan.budget 是用户输入的预算上限，不是系统核验出的预计花费。
+      estimatedBudget: agent.verifiedPlanCost,
       status: 0,
       priority: 1
     })
@@ -33,7 +35,8 @@ async function savePlanAsInspiration() {
     <div class="plan-head">
       <div>
         <h2>{{ agent.plan.destination }} · {{ agent.dayTabs.length }} 天</h2>
-        <p v-if="agent.plan.budget">预算 ¥{{ agent.plan.budget?.toLocaleString() }}</p>
+        <p v-if="agent.plan.budget">预算上限 ¥{{ agent.plan.budget?.toLocaleString() }}</p>
+        <p>{{ agent.verifiedPlanCost == null ? '预计费用：待确认' : `已核验费用下限：${formatCost(agent.verifiedPlanCost)}` }}</p>
       </div>
       <button class="inspiration-btn" :disabled="savingInspiration || savedInspiration" @click="savePlanAsInspiration">
         {{ savingInspiration ? '保存中…' : savedInspiration ? '已存入灵感' : '✦ 存到灵感目的地' }}
@@ -42,7 +45,7 @@ async function savePlanAsInspiration() {
         <span class="weather-icon">{{ agent.globalWeather.icon || '☀️' }}</span>
         <div>
           <b>{{ agent.globalWeather.text || '天气' }}</b>
-          <span>{{ agent.globalWeather.tempMin || '--' }} ~ {{ agent.globalWeather.tempMax || '--' }}℃</span>
+          <span>{{ agent.globalWeather.tempMin ?? '--' }} ~ {{ agent.globalWeather.tempMax ?? '--' }}℃</span>
         </div>
       </div>
     </div>
@@ -65,7 +68,7 @@ async function savePlanAsInspiration() {
           <div v-if="agent.dayTabs[agent.activeDay].weather" class="day-weather-row">
             <div class="weather-chip"><span>{{ agent.dayTabs[agent.activeDay].weather.icon }}</span><span>{{ agent.dayTabs[agent.activeDay].weather.text }}</span></div>
             <div class="weather-chip"><span>🌡️</span><span>{{ agent.dayTabs[agent.activeDay].weather.tempMin }} ~ {{ agent.dayTabs[agent.activeDay].weather.tempMax }}℃</span></div>
-            <div v-if="agent.dayTabs[agent.activeDay].budget" class="weather-chip budget-chip"><span>💰</span><span>¥{{ agent.dayTabs[agent.activeDay].budget }}</span></div>
+            <div v-if="agent.dayTabs[agent.activeDay].budget != null" class="weather-chip budget-chip"><span>💰</span><span>¥{{ agent.dayTabs[agent.activeDay].budget }}</span></div>
           </div>
           <div v-if="agent.currentActivities.length" class="activity-cards">
             <article v-for="(activity, ai) in agent.currentActivities" :key="ai" class="activity-card" :class="{ 'has-image': !!agent.imageMap[activity.name]?.length }">
@@ -77,7 +80,7 @@ async function savePlanAsInspiration() {
                 <span>{{ activity.time || '行程' }}</span>
                 <h4>{{ activity.name }}</h4>
                 <p>{{ activity.location || activity.notes }}</p>
-                <small>⏱ {{ activity.duration ? Math.round(activity.duration / 60) : 1 }} 小时 · ¥{{ activity.cost || 0 }}</small>
+                <small>⏱ {{ activity.duration ? Math.round(activity.duration / 60) : 1 }} 小时 · {{ formatCost(activity.cost) }}</small>
               </div>
             </article>
           </div>

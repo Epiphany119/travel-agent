@@ -12,17 +12,17 @@
       <div v-if="plan.morning" class="plan-slot plan-slot--morning">
         <div class="slot-label">🌅 上午</div>
         <div class="slot-content">{{ plan.morning.plan }}</div>
-        <div class="slot-meta">{{ plan.morning.duration }} · ¥{{ plan.morning.budget }}</div>
+        <div class="slot-meta">{{ plan.morning.duration }} · {{ formatCost(plan.morning.budget) }}</div>
       </div>
       <div v-if="plan.afternoon" class="plan-slot plan-slot--afternoon">
         <div class="slot-label">☀️ 下午</div>
         <div class="slot-content">{{ plan.afternoon.plan }}</div>
-        <div class="slot-meta">{{ plan.afternoon.duration }} · ¥{{ plan.afternoon.budget }}</div>
+        <div class="slot-meta">{{ plan.afternoon.duration }} · {{ formatCost(plan.afternoon.budget) }}</div>
       </div>
       <div v-if="plan.evening" class="plan-slot plan-slot--evening">
         <div class="slot-label">🌙 晚上</div>
         <div class="slot-content">{{ plan.evening.plan }}</div>
-        <div class="slot-meta">{{ plan.evening.duration }} · ¥{{ plan.evening.budget }}</div>
+        <div class="slot-meta">{{ plan.evening.duration }} · {{ formatCost(plan.evening.budget) }}</div>
       </div>
     </div>
 
@@ -34,6 +34,7 @@
 
 <script setup lang="ts">
 import type { DayPlan } from '@/types/stream'
+import { formatCost } from '@/utils/planValues'
 
 defineProps<{ plan: DayPlan }>()
 </script>

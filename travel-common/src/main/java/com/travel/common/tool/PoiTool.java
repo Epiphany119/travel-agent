@@ -2,6 +2,7 @@ package com.travel.common.tool;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.travel.common.exception.RateLimitException;
+import com.travel.common.http.HttpClientSupport;
 import com.travel.common.ratelimit.RateLimitService;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -50,7 +51,7 @@ public class PoiTool implements Function<PoiTool.AmapRequest, PoiTool.AmapRespon
     @Autowired(required = false)
     private RateLimitService rateLimitService;
 
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final RestTemplate restTemplate = HttpClientSupport.newRestTemplate();
 
     @Override
     public AmapResponse apply(AmapRequest request) {

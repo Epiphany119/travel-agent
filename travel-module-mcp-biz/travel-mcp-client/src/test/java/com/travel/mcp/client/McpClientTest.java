@@ -52,7 +52,7 @@ class McpClientTest {
             .block(Duration.ofSeconds(5));
 
         assertNotNull(response);
-        assertTrue(response.contains("\"success\":true"));
+        assertTrue(response.contains("\"success\": true"));
         assertTrue(response.contains("杭州"));
     }
 
@@ -68,8 +68,8 @@ class McpClientTest {
             .block(Duration.ofSeconds(5));
 
         assertNotNull(response);
-        assertTrue(response.contains("\"name\":\"echo-weather\""));
-        assertTrue(response.contains("\"version\":\"1.0.0\""));
+        assertTrue(response.contains("\"name\": \"echo-weather\""));
+        assertTrue(response.contains("\"version\": \"1.0.0\""));
         assertTrue(response.contains("weather.get_forecast"));
     }
 

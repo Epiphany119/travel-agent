@@ -1,6 +1,7 @@
 package com.travel.module.user.biz.domain.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.travel.common.http.HttpClientSupport;
 import com.travel.module.user.biz.infra.persistence.*;
 import com.travel.module.user.biz.infra.storage.ImageStorageService;
 import lombok.RequiredArgsConstructor;
@@ -33,7 +34,7 @@ public class UserBizService {
     private final ImageStorageService imageStorageService;
     private final JdbcTemplate jdbcTemplate;
 
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final RestTemplate restTemplate = HttpClientSupport.newRestTemplate();
 
     public List<TravelNotePO> listTravelNotes(String userId) {
         LambdaQueryWrapper<TravelNotePO> w = new LambdaQueryWrapper<>();

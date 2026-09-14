@@ -8,6 +8,7 @@ import {
   saveJourneyPoints, saveJourneyImages, uploadImage, geocodeAddress,
   type JourneyDetail, type Journey, type JourneyPoint, type JourneyImage
 } from '@/api/user'
+import { formatCost } from '@/utils/planValues'
 
 const router = useRouter()
 const route = useRoute()
@@ -263,7 +264,7 @@ onMounted(async () => {
 
     <section v-if="selectedJourney" class="journey-studio">
       <div class="studio-toolbar"><button class="ghost" @click="closeJourneyStudio">← 返回</button><span>{{ journeyStudioEditing ? '正在编辑' : '预览' }}</span><button class="add-btn" @click="journeyStudioEditing ? saveJourneyStudio() : journeyStudioEditing = true">{{ journeyStudioEditing ? '保存' : '编辑' }}</button></div>
-      <article class="journey-studio-card"><div class="journey-studio-cover" v-if="selectedJourney.images.length"><img :src="selectedJourney.images[0].imageUrl" alt="" /></div><div class="journey-studio-content" v-if="!journeyStudioEditing"><h2>{{ selectedJourney.journey.destination }}</h2><p class="dates">{{ dateRange(selectedJourney) }} · {{ selectedJourney.journey.totalDays || '—' }} 天</p><p class="summary">{{ selectedJourney.journey.summary || '还没有旅程总结。' }}</p><p class="summary">{{ selectedJourney.journey.highlight || '' }}</p><div class="chips"><span>{{ selectedJourney.journey.travelType || '未设置类型' }}</span><span v-if="selectedJourney.journey.totalCost">¥{{ selectedJourney.journey.totalCost.toLocaleString() }}</span><span v-if="selectedJourney.journey.departureCity">从 {{ selectedJourney.journey.departureCity }} 出发</span></div><h4 class="sec">路线 · {{ selectedJourney.points.length }} 站</h4><div class="point" v-for="(p,i) in selectedJourney.points" :key="i"><span class="idx">{{ i + 1 }}</span><div class="p-info"><b>{{ p.name }}</b><p>{{ p.description }}</p></div></div></div><div class="journey-studio-content studio-form" v-else><label>目的地<input v-model="selectedJourney.journey.destination" /></label><label>出发城市<input v-model="selectedJourney.journey.departureCity" /></label><div class="row"><label>开始日期<input v-model="selectedJourney.journey.startDate" type="date" /></label><label>结束日期<input v-model="selectedJourney.journey.endDate" type="date" /></label></div><label>总结<textarea v-model="selectedJourney.journey.summary" rows="4"></textarea></label><label>亮点<input v-model="selectedJourney.journey.highlight" /></label><label>小贴士<textarea v-model="selectedJourney.journey.tips" rows="3"></textarea></label></div></article>
+      <article class="journey-studio-card"><div class="journey-studio-cover" v-if="selectedJourney.images.length"><img :src="selectedJourney.images[0].imageUrl" alt="" /></div><div class="journey-studio-content" v-if="!journeyStudioEditing"><h2>{{ selectedJourney.journey.destination }}</h2><p class="dates">{{ dateRange(selectedJourney) }} · {{ selectedJourney.journey.totalDays || '—' }} 天</p><p class="summary">{{ selectedJourney.journey.summary || '还没有旅程总结。' }}</p><p class="summary">{{ selectedJourney.journey.highlight || '' }}</p><div class="chips"><span>{{ selectedJourney.journey.travelType || '未设置类型' }}</span><span v-if="selectedJourney.journey.totalCost != null">{{ formatCost(selectedJourney.journey.totalCost) }}</span><span v-else>费用待确认</span><span v-if="selectedJourney.journey.departureCity">从 {{ selectedJourney.journey.departureCity }} 出发</span></div><h4 class="sec">路线 · {{ selectedJourney.points.length }} 站</h4><div class="point" v-for="(p,i) in selectedJourney.points" :key="i"><span class="idx">{{ i + 1 }}</span><div class="p-info"><b>{{ p.name }}</b><p>{{ p.description }}</p></div></div></div><div class="journey-studio-content studio-form" v-else><label>目的地<input v-model="selectedJourney.journey.destination" /></label><label>出发城市<input v-model="selectedJourney.journey.departureCity" /></label><div class="row"><label>开始日期<input v-model="selectedJourney.journey.startDate" type="date" /></label><label>结束日期<input v-model="selectedJourney.journey.endDate" type="date" /></label></div><label>总结<textarea v-model="selectedJourney.journey.summary" rows="4"></textarea></label><label>亮点<input v-model="selectedJourney.journey.highlight" /></label><label>小贴士<textarea v-model="selectedJourney.journey.tips" rows="3"></textarea></label></div></article>
     </section>
     <section v-else class="list" v-loading="loading">
       <article v-for="d in list" :key="d.journey.id" class="card" @click="openJourneyTab(d)">
@@ -280,7 +281,8 @@ onMounted(async () => {
           <p class="summary" v-if="d.journey.summary">{{ d.journey.summary }}</p>
           <div class="chips">
             <span v-if="d.journey.travelType">{{ d.journey.travelType }}</span>
-            <span v-if="d.journey.totalCost">¥{{ d.journey.totalCost.toLocaleString() }}</span>
+            <span v-if="d.journey.totalCost != null">{{ formatCost(d.journey.totalCost) }}</span>
+            <span v-else>费用待确认</span>
             <span v-if="d.journey.departureCity">从 {{ d.journey.departureCity }} 出发</span>
           </div>
           <div class="route" v-if="d.points && d.points.length">

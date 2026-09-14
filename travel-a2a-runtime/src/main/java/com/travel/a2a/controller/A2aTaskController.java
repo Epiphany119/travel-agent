@@ -1,5 +1,6 @@
 package com.travel.a2a.controller;
 
+import com.travel.a2a.config.A2aRuntimeProperties;
 import com.travel.a2a.model.TravelPlanRequest;
 import com.travel.a2a.service.HostAgentService;
 import lombok.RequiredArgsConstructor;
@@ -10,6 +11,8 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.Map;
 import java.util.UUID;
+import java.time.Duration;
+import java.util.concurrent.RejectedExecutionException;
 
 /**
  * A2A任务控制器
@@ -24,6 +27,7 @@ import java.util.UUID;
 public class A2aTaskController {
 
     private final HostAgentService hostAgentService;
+    private final A2aRuntimeProperties runtimeProperties;
 
     /**
      * 创建新任务并开始执行
@@ -39,8 +43,8 @@ public class A2aTaskController {
         log.info("创建新任务并开始SSE流: taskId={}, destination={}, days={}",
                 taskId, request.getDestination(), request.getDays());
 
-        SseEmitter emitter = new SseEmitter(300_000L);
-        hostAgentService.plan(request, taskId, emitter);
+        SseEmitter emitter = newEmitter();
+        startPlan(request, taskId, emitter);
         return emitter;
     }
 
@@ -77,10 +81,10 @@ public class A2aTaskController {
                 taskId, request.getDestination(), request.getDays());
 
         // 启动异步任务
-        SseEmitter emitter = new SseEmitter(300_000L);
-        hostAgentService.plan(request, taskId, emitter);
-
-        return Map.of("taskId", taskId, "status", "created");
+        SseEmitter emitter = newEmitter();
+        return startPlan(request, taskId, emitter)
+                ? Map.of("taskId", taskId, "status", "created")
+                : Map.of("taskId", taskId, "status", "rejected");
     }
 
     /**
@@ -106,8 +110,27 @@ public class A2aTaskController {
             request.setTravelStyle("休闲");
         }
 
-        SseEmitter emitter = new SseEmitter(300_000L);
-        hostAgentService.plan(request, taskId, emitter);
+        SseEmitter emitter = newEmitter();
+        startPlan(request, taskId, emitter);
         return emitter;
+    }
+
+    private boolean startPlan(TravelPlanRequest request, String taskId, SseEmitter emitter) {
+        try {
+            hostAgentService.plan(request, taskId, emitter);
+            return true;
+        } catch (RejectedExecutionException e) {
+            log.warn("A2A 执行器已满载，拒绝任务: taskId={}", taskId);
+            emitter.completeWithError(new IllegalStateException("服务繁忙，请稍后重试"));
+            return false;
+        }
+    }
+
+    private SseEmitter newEmitter() {
+        Duration timeout = runtimeProperties.getSseTimeout();
+        if (timeout == null || timeout.isZero() || timeout.isNegative()) {
+            timeout = Duration.ofMinutes(5);
+        }
+        return new SseEmitter(timeout.toMillis());
     }
 }

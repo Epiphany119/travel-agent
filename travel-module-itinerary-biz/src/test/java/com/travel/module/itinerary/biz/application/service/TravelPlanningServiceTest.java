@@ -37,6 +37,7 @@ class TravelPlanningServiceTest {
         assertThat(plan.getDayPlans().get(0).getMeals()).extracting("restaurantName").contains("西湖风景名胜区", "知味观");
         assertThat(plan.getTravelTips()).anyMatch(tip -> tip.contains("小雨")).anyMatch(tip -> tip.contains("雨具"));
         assertThat(plan.getOverview()).contains("高德地图获取 2 个景点候选");
+        assertThat(plan.getEstimatedCost()).isNull();
         assertThat(plan.getDayPlans().get(0).getAttractions()).extracting("name").doesNotContain("杭州城市地标 / 核心景区");
         ArgumentCaptor<PoiTool.AmapRequest> poiRequest = ArgumentCaptor.forClass(PoiTool.AmapRequest.class);
         verify(poiTool, times(2)).apply(poiRequest.capture());
@@ -58,5 +59,6 @@ class TravelPlanningServiceTest {
         assertThat(plan.getDayPlans().get(0).getAttractions()).isEmpty();
         assertThat(plan.getDayPlans().get(0).getMeals()).isEmpty();
         assertThat(plan.getDataWarnings()).isNotEmpty().anyMatch(warning -> warning.contains("高德地图"));
+        assertThat(plan.getEstimatedCost()).isNull();
     }
 }

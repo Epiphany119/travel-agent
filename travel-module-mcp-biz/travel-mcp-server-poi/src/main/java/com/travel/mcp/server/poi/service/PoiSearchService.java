@@ -3,6 +3,7 @@ package com.travel.mcp.server.poi.service;
 import com.travel.mcp.server.poi.model.AmapResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
@@ -18,10 +19,14 @@ public class PoiSearchService {
     private static final String POI_SEARCH_URL = "https://restapi.amap.com/v3/place/text";
     private static final String INPUTTIPS_URL = "https://restapi.amap.com/v3/assistant/inputtips";
 
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final RestTemplate restTemplate;
 
     @Value("${travel.poi.amap-key:}")
     private String apiKey;
+
+    public PoiSearchService(@Qualifier("poiRestTemplate") RestTemplate restTemplate) {
+        this.restTemplate = restTemplate;
+    }
 
     public AmapResponse search(String keywords, String city, String types, Integer limit) {
         if (apiKey == null || apiKey.isBlank()) {
@@ -88,6 +93,7 @@ public class PoiSearchService {
 
     private AmapResponse.PoiInfo parsePoiInfo(Map<String, Object> poi) {
         return AmapResponse.PoiInfo.builder()
+                .id((String) poi.get("id"))
                 .name((String) poi.get("name"))
                 .location((String) poi.get("location"))
                 .address((String) poi.get("address"))
