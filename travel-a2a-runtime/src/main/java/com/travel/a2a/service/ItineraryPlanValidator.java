@@ -18,6 +18,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.text.Normalizer;
 
 /**
  * 对 LLM 结构化行程做确定性校验。
@@ -30,6 +31,7 @@ public class ItineraryPlanValidator {
 
     private static final int SCHEMA_VERSION = 1;
     private static final int MAX_ERRORS = 20;
+    private static final int MAX_EXTERNAL_TEXT_LENGTH = 160;
 
     public ValidationResult validate(LlmItineraryPlan plan,
                                      TravelPlanRequest request,
@@ -193,20 +195,22 @@ public class ItineraryPlanValidator {
 
         if (toolResult.getPois() != null) {
             for (PoiResult poi : toolResult.getPois()) {
-                if (poi != null && hasText(poi.getPlaceId()) && hasText(poi.getName())) {
+                String name = sanitizeExternalText(poi == null ? null : poi.getName());
+                if (poi != null && hasText(poi.getPlaceId()) && hasText(name)) {
                     candidates.putIfAbsent(poi.getPlaceId(), new CandidatePlace(
-                            poi.getPlaceId(), poi.getName(), poi.getAddress(),
+                            poi.getPlaceId(), name, sanitizeExternalText(poi.getAddress()),
                             LlmItineraryPlan.ItemType.ATTRACTION, null));
                 }
             }
         }
         if (toolResult.getMeals() != null) {
             for (MealResult meal : toolResult.getMeals()) {
-                if (meal != null && hasText(meal.getPlaceId()) && hasText(meal.getName())) {
+                String name = sanitizeExternalText(meal == null ? null : meal.getName());
+                if (meal != null && hasText(meal.getPlaceId()) && hasText(name)) {
                     BigDecimal unitCost = meal.getAvgPrice() == null || meal.getAvgPrice() < 0
                             ? null : BigDecimal.valueOf(meal.getAvgPrice());
                     candidates.putIfAbsent(meal.getPlaceId(), new CandidatePlace(
-                            meal.getPlaceId(), meal.getName(), meal.getAddress(),
+                            meal.getPlaceId(), name, sanitizeExternalText(meal.getAddress()),
                             LlmItineraryPlan.ItemType.RESTAURANT, unitCost));
                 }
             }
@@ -374,6 +378,24 @@ public class ItineraryPlanValidator {
 
     private static boolean hasText(String value) {
         return value != null && !value.isBlank();
+    }
+
+    /**
+     * 清理工具返回的展示文本。该方法不是提示词安全边界，真正的边界仍是
+     * UNTRUSTED_TOOL_DATA 封装和后续候选 ID 校验；这里只移除控制字符并限制长度，
+     * 避免外部内容污染提示词或最终 Markdown。
+     */
+    private static String sanitizeExternalText(String value) {
+        if (value == null) return null;
+        String normalized = Normalizer.normalize(value, Normalizer.Form.NFKC)
+                .replace('<', '＜')
+                .replace('>', '＞')
+                .replaceAll("[\\p{Cntrl}&&[^\\t\\r\\n]]", "")
+                .replaceAll("[\\r\\n\\t]+", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+        if (normalized.length() <= MAX_EXTERNAL_TEXT_LENGTH) return normalized;
+        return normalized.substring(0, MAX_EXTERNAL_TEXT_LENGTH);
     }
 
     public record CandidatePlace(String placeId,

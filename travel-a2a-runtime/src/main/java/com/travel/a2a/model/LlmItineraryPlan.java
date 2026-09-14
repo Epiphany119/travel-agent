@@ -1,5 +1,7 @@
 package com.travel.a2a.model;
 
+import com.fasterxml.jackson.annotation.JsonFormat;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -19,6 +21,7 @@ import java.util.List;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
+@JsonIgnoreProperties(ignoreUnknown = false)
 public class LlmItineraryPlan {
 
     @JsonProperty("schemaVersion")
@@ -33,12 +36,14 @@ public class LlmItineraryPlan {
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
+    @JsonIgnoreProperties(ignoreUnknown = false)
     public static class Day {
 
         @JsonProperty("dayNo")
         private Integer dayNo;
 
         @JsonProperty("date")
+        @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd")
         private LocalDate date;
 
         @JsonProperty("items")
@@ -51,6 +56,7 @@ public class LlmItineraryPlan {
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
+    @JsonIgnoreProperties(ignoreUnknown = false)
     public static class Item {
 
         @JsonProperty("type")
@@ -60,9 +66,11 @@ public class LlmItineraryPlan {
         private String placeId;
 
         @JsonProperty("startTime")
+        @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "HH:mm")
         private LocalTime startTime;
 
         @JsonProperty("endTime")
+        @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "HH:mm")
         private LocalTime endTime;
 
         /**

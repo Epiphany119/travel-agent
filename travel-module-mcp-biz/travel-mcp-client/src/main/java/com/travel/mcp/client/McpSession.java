@@ -59,6 +59,11 @@ public class McpSession {
      * @return 工具执行结果
      */
     public McpToolResult callTool(McpToolCall toolCall) {
+        if (toolCall == null || !McpToolPermissionPolicy.isAllowed(serverName, toolCall.name())) {
+            String toolName = toolCall == null ? "unknown" : toolCall.name();
+            log.warn("Tool call rejected by permission policy: server={}, tool={}", serverName, toolName);
+            return McpToolResult.failure(toolName, "工具未被授权");
+        }
         log.info("Calling tool: server={}, tool={}", serverName, toolCall.name());
         try {
             McpToolResult result = transport.callTool(serverUrl, toolCall);
@@ -94,7 +99,10 @@ public class McpSession {
      * @return 工具列表
      */
     public List<McpTool> getTools() {
-        return serverInfo.tools();
+        return serverInfo.tools().stream()
+                .filter(tool -> tool != null
+                        && McpToolPermissionPolicy.isAllowed(serverName, tool.name()))
+                .toList();
     }
 
     /**
