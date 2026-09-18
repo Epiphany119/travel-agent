@@ -13,6 +13,9 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.Map;
+import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 
 /**
  * 旅行笔记控制器 - 类飞书文档的在线编辑笔记。
@@ -31,17 +34,16 @@ public class NoteController {
 
     /** 查询用户笔记列表（不含内容块） */
     @GetMapping
-    public ApiResult<List<NoteDocumentResponse>> list(
-            @RequestParam(defaultValue = "user_001") String userId) {
-        return ApiResult.success(noteService.listDocs(userId));
+    public ApiResult<List<NoteDocumentResponse>> list(HttpServletRequest http) {
+        return ApiResult.success(noteService.listDocs(user(http)));
     }
 
     /** 获取单篇笔记完整内容 */
     @GetMapping("/{id}")
     public ApiResult<NoteDocumentResponse> get(
             @PathVariable Long id,
-            @RequestParam(required = false) String userId) {
-        return ApiResult.success(noteService.getDoc(id, userId));
+            HttpServletRequest http) {
+        return ApiResult.success(noteService.getDoc(id, user(http)));
     }
 
     /** 通过分享 token 查看笔记 */
@@ -55,8 +57,8 @@ public class NoteController {
     @PostMapping
     public ApiResult<NoteDocumentResponse> create(
             @Valid @RequestBody NoteDocumentRequest request,
-            @RequestParam(defaultValue = "user_001") String userId) {
-        return ApiResult.success(noteService.create(userId, request));
+            HttpServletRequest http) {
+        return ApiResult.success(noteService.create(user(http), request));
     }
 
     /** 更新笔记（属性 + 内容块整段覆盖） */
@@ -64,16 +66,16 @@ public class NoteController {
     public ApiResult<NoteDocumentResponse> update(
             @PathVariable Long id,
             @RequestBody NoteDocumentRequest request,
-            @RequestParam(defaultValue = "user_001") String userId) {
-        return ApiResult.success(noteService.update(id, userId, request));
+            HttpServletRequest http) {
+        return ApiResult.success(noteService.update(id, user(http), request));
     }
 
     /** 删除笔记 */
     @DeleteMapping("/{id}")
     public ApiResult<Void> delete(
             @PathVariable Long id,
-            @RequestParam(defaultValue = "user_001") String userId) {
-        noteService.delete(id, userId);
+            HttpServletRequest http) {
+        noteService.delete(id, user(http));
         return ApiResult.success();
     }
 
@@ -90,8 +92,9 @@ public class NoteController {
     @PostMapping("/upload")
     public ApiResult<?> uploadImage(
             @RequestParam("file") MultipartFile file,
-            @RequestParam(defaultValue = "user_001") String userId) {
+            HttpServletRequest http) {
         try {
+            String userId = user(http);
             String url = imageStorageService.store(file, userId);
             return ApiResult.success(Map.of("url", url));
         } catch (IllegalArgumentException e) {
@@ -100,5 +103,11 @@ public class NoteController {
             log.error("笔记图片上传失败", e);
             return ApiResult.error("上传失败: " + e.getMessage());
         }
+    }
+
+    private String user(HttpServletRequest request) {
+        Object value = request.getAttribute("authenticatedUserId");
+        if (value == null || value.toString().isBlank()) throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "请先登录");
+        return value.toString();
     }
 }
