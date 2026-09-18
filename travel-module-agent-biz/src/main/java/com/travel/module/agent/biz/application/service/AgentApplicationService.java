@@ -32,12 +32,13 @@ public class AgentApplicationService {
     /**
      * 创建新会话
      */
-    public SessionResponse createSession(CreateSessionRequest request) {
+    public SessionResponse createSession(CreateSessionRequest request, Long authenticatedUserId) {
+        if (authenticatedUserId == null) throw new IllegalArgumentException("缺少认证用户身份");
         String sessionId = IdGenerator.generateSessionId();
 
         ChatSession session = new ChatSession();
         session.setSessionId(sessionId);
-        session.setUserId(1L); // TODO: 从上下文获取
+        session.setUserId(authenticatedUserId);
         session.setTitle("去" + request.getDestination() + "旅行规划");
         session.setMessages(new ArrayList<>());
         session.setStatus("active");

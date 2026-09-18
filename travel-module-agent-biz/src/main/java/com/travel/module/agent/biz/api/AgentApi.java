@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import jakarta.servlet.http.HttpServletRequest;
 
 /**
  * Agent API控制器
@@ -24,8 +25,10 @@ public class AgentApi {
      * 创建新会话
      */
     @PostMapping("/sessions")
-    public ApiResult<SessionResponse> createSession(@Valid @RequestBody CreateSessionRequest request) {
-        return ApiResult.success(agentService.createSession(request));
+    public ApiResult<SessionResponse> createSession(@Valid @RequestBody CreateSessionRequest request, HttpServletRequest http) {
+        String raw = (String) http.getAttribute("authenticatedUserId");
+        Long userId = raw == null ? null : Long.valueOf(raw);
+        return ApiResult.success(agentService.createSession(request, userId));
     }
 
     /**

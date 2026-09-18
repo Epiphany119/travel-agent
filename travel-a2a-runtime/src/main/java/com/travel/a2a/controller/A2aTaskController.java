@@ -28,6 +28,7 @@ public class A2aTaskController {
 
     private final HostAgentService hostAgentService;
     private final A2aRuntimeProperties runtimeProperties;
+    private final com.travel.a2a.service.TaskStateStore taskStateStore;
 
     /**
      * 创建新任务并开始执行
@@ -40,6 +41,7 @@ public class A2aTaskController {
     @GetMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter createAndStream(@ModelAttribute TravelPlanRequest request) {
         String taskId = UUID.randomUUID().toString();
+        taskStateStore.create(taskId);
         log.info("创建新任务并开始SSE流: taskId={}, destination={}, days={}",
                 taskId, request.getDestination(), request.getDays());
 
@@ -59,11 +61,16 @@ public class A2aTaskController {
     @GetMapping("/{taskId}/status")
     public Map<String, Object> getTaskStatus(@PathVariable String taskId) {
         log.info("查询任务状态: taskId={}", taskId);
-        // TODO: 可以通过Redis或其他方式存储任务状态
-        return Map.of(
-                "taskId", taskId,
-                "status", "processing"
-        );
+        var state = taskStateStore.get(taskId);
+        if (state == null) return Map.of("taskId", taskId, "status", "NOT_FOUND");
+        return Map.of("taskId", state.taskId(), "status", state.status(), "progress", state.progress(),
+                "error", state.error() == null ? "" : state.error(), "updatedAt", state.updatedAt().toString());
+    }
+
+    @PostMapping("/{taskId}/cancel")
+    public Map<String, String> cancelTask(@PathVariable String taskId) {
+        if (taskStateStore.get(taskId) == null) return Map.of("taskId", taskId, "status", "NOT_FOUND");
+        taskStateStore.cancel(taskId); return Map.of("taskId", taskId, "status", "CANCELLED");
     }
 
     /**
@@ -77,6 +84,7 @@ public class A2aTaskController {
     @PostMapping
     public Map<String, String> createTask(@RequestBody TravelPlanRequest request) {
         String taskId = UUID.randomUUID().toString();
+        taskStateStore.create(taskId);
         log.info("创建新任务: taskId={}, destination={}, days={}",
                 taskId, request.getDestination(), request.getDays());
 
@@ -100,6 +108,7 @@ public class A2aTaskController {
     public SseEmitter streamTask(@PathVariable String taskId,
                                   @RequestBody(required = false) TravelPlanRequest request) {
         log.info("获取任务SSE流: taskId={}", taskId);
+        if (taskStateStore.get(taskId) == null) taskStateStore.create(taskId);
 
         if (request == null) {
             request = new TravelPlanRequest();

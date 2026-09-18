@@ -45,6 +45,7 @@ public class HostAgentService {
     private final ObjectMapper objectMapper;
     private final ItineraryPlanValidator planValidator;
     private final LlmItineraryPlanParser planParser;
+    private final TaskStateStore taskStateStore;
 
     /**
      * 执行行程规划并通过SSE流输出
@@ -55,6 +56,7 @@ public class HostAgentService {
      */
     @Async("taskExecutor")
     public void plan(TravelPlanRequest request, String taskId, SseEmitter emitter) {
+        taskStateStore.running(taskId, 5);
         // 设置完成和超时回调
         emitter.onCompletion(() -> log.info("SSE流完成: taskId={}", taskId));
         emitter.onTimeout(() -> log.warn("SSE流超时: taskId={}", taskId));
@@ -93,8 +95,14 @@ public class HostAgentService {
             sendEvent(emitter, "tool_call", A2AStreamEvent.toolCall(
                     java.util.Map.of("source", "budget", "action", "估算预算")));
 
+            if (taskStateStore.get(taskId) != null && "CANCELLED".equals(taskStateStore.get(taskId).status())) {
+                emitter.complete();
+                return;
+            }
+
             // 3. 并行执行子Agent编排
             TravelPlanResult result = orchestrator.orchestrate(request);
+            taskStateStore.running(taskId, 70);
 
             // 4. 发送工具结果事件
             if (result.getDataWarnings() != null) {
@@ -151,11 +159,13 @@ public class HostAgentService {
             // 7. 发送完成事件
             result.setFinalPlan(finalPlan);
             sendEvent(emitter, "task_done", A2AStreamEvent.taskDone(result));
+            taskStateStore.succeed(taskId);
 
             log.info("行程规划完成: taskId={}", taskId);
 
         } catch (Exception e) {
             log.error("执行行程规划失败: taskId={}", taskId, e);
+            taskStateStore.fail(taskId, e.getMessage());
             sendError(emitter, e.getMessage());
         }
     }

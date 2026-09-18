@@ -23,7 +23,6 @@ services:
       - "3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
-      - ./data/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-root}"]
       interval: 10s
@@ -38,8 +37,9 @@ services:
   #==========================================
   weather:
     build:
-      context: .
-      dockerfile: travel-mcp-server-weather/Dockerfile
+      context: ./travel-module-mcp-biz
+      dockerfile: Dockerfile
+      args: { MODULE: travel-mcp-server-weather }
     container_name: travel-weather
     restart: unless-stopped
     environment:
@@ -59,8 +59,9 @@ services:
 
   poi:
     build:
-      context: .
-      dockerfile: travel-mcp-server-poi/Dockerfile
+      context: ./travel-module-mcp-biz
+      dockerfile: Dockerfile
+      args: { MODULE: travel-mcp-server-poi }
     container_name: travel-poi
     restart: unless-stopped
     environment:
@@ -79,8 +80,9 @@ services:
 
   meal:
     build:
-      context: .
-      dockerfile: travel-mcp-server-meal/Dockerfile
+      context: ./travel-module-mcp-biz
+      dockerfile: Dockerfile
+      args: { MODULE: travel-mcp-server-meal }
     container_name: travel-meal
     restart: unless-stopped
     environment:
@@ -102,8 +104,9 @@ services:
 
   budget:
     build:
-      context: .
-      dockerfile: travel-mcp-server-budget/Dockerfile
+      context: ./travel-module-mcp-biz
+      dockerfile: Dockerfile
+      args: { MODULE: travel-mcp-server-budget }
     container_name: travel-budget
     restart: unless-stopped
     environment:
@@ -121,8 +124,9 @@ services:
 
   itinerary:
     build:
-      context: .
-      dockerfile: travel-mcp-server-itinerary/Dockerfile
+      context: ./travel-module-mcp-biz
+      dockerfile: Dockerfile
+      args: { MODULE: travel-mcp-server-itinerary }
     container_name: travel-itinerary
     restart: unless-stopped
     environment:
