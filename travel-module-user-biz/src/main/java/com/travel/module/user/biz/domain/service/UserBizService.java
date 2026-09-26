@@ -2,6 +2,7 @@ package com.travel.module.user.biz.domain.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.travel.common.http.HttpClientSupport;
+import com.travel.module.user.biz.api.dto.SaveAiPlanRequest;
 import com.travel.module.user.biz.infra.persistence.*;
 import com.travel.module.user.biz.infra.storage.ImageStorageService;
 import lombok.RequiredArgsConstructor;
@@ -23,6 +24,8 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class UserBizService {
 
+    private static final Set<String> IMAGE_EXTENSIONS = Set.of("jpg", "jpeg", "png", "gif", "webp");
+
     private final InspirationMapper inspirationMapper;
     private final JourneyMapper journeyMapper;
     private final JourneyPointMapper journeyPointMapper;
@@ -42,7 +45,11 @@ public class UserBizService {
         return travelNoteMapper.selectList(w);
     }
 
-    public TravelNotePO getTravelNote(Long id) { return travelNoteMapper.selectById(id); }
+    public TravelNotePO getTravelNote(Long id, String userId) {
+        return travelNoteMapper.selectOne(new LambdaQueryWrapper<TravelNotePO>()
+                .eq(TravelNotePO::getId, id)
+                .eq(TravelNotePO::getUserId, userId));
+    }
 
     public TravelNotePO getSharedTravelNote(String token) {
         return travelNoteMapper.selectOne(new LambdaQueryWrapper<TravelNotePO>().eq(TravelNotePO::getShareToken, token).eq(TravelNotePO::getVisibility, "link"));
@@ -50,7 +57,9 @@ public class UserBizService {
 
     @Transactional
     public TravelNotePO saveTravelNote(TravelNotePO note) {
-        if (note.getUserId() == null) note.setUserId("user_001");
+        if (note.getUserId() == null || note.getUserId().isBlank()) {
+            throw new IllegalArgumentException("userId is required");
+        }
         if (note.getTemplateVersion() == null) note.setTemplateVersion(1);
         if (note.getNoteType() == null) note.setNoteType("inspiration");
         if (note.getSourceType() == null) note.setSourceType("manual");
@@ -58,19 +67,71 @@ public class UserBizService {
         if (note.getVisibility() == null) note.setVisibility("private");
         if (note.getContentJson() == null || note.getContentJson().isBlank()) note.setContentJson("{\"overview\":{},\"days\":[],\"budget\":{\"items\":[]},\"strategies\":[],\"reminders\":[]}");
         if (note.getShareToken() == null && "link".equals(note.getVisibility())) note.setShareToken(UUID.randomUUID().toString().replace("-", ""));
-        if (note.getId() == null) travelNoteMapper.insert(note); else travelNoteMapper.updateById(note);
+        if (note.getId() == null) {
+            travelNoteMapper.insert(note);
+        } else {
+            TravelNotePO existing = travelNoteMapper.selectById(note.getId());
+            if (existing == null || !Objects.equals(existing.getUserId(), note.getUserId())) {
+                throw new org.springframework.web.server.ResponseStatusException(
+                        org.springframework.http.HttpStatus.NOT_FOUND, "travel note not found");
+            }
+            travelNoteMapper.updateById(note);
+        }
         return note;
+    }
+
+    @Transactional
+    public Map<String, Object> saveAiPlan(SaveAiPlanRequest request, String userId) {
+        if (request == null || request.getNote() == null || userId == null || userId.isBlank()) {
+            throw new IllegalArgumentException("AI plan content is required");
+        }
+        if (!Set.of("journey", "inspiration").contains(request.getTarget() == null ? "" : request.getTarget().toLowerCase(Locale.ROOT))) {
+            throw new IllegalArgumentException("unsupported AI plan target");
+        }
+        String target = request.getTarget().toLowerCase(Locale.ROOT);
+        TravelNotePO note = request.getNote();
+        note.setUserId(userId);
+        note.setNoteType(target);
+        TravelNotePO savedNote = saveTravelNote(note);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("note", savedNote);
+        if ("journey".equals(target)) {
+            JourneyPO journey = request.getJourney();
+            if (journey == null) throw new IllegalArgumentException("journey is required");
+            journey.setUserId(userId);
+            journey.setId(null);
+            JourneyPO savedJourney = addJourney(journey);
+            if (request.getPoints() != null && !request.getPoints().isEmpty()) {
+                saveJourneyPoints(savedJourney.getId(), request.getPoints(), userId);
+            }
+            result.put("journey", getJourneyDetail(savedJourney.getId(), userId));
+        } else {
+            InspirationPO inspiration = request.getInspiration();
+            if (inspiration == null) throw new IllegalArgumentException("inspiration is required");
+            inspiration.setUserId(userId);
+            inspiration.setId(null);
+            result.put("inspiration", addInspiration(inspiration));
+        }
+        return result;
     }
 
     @Transactional
     public TravelNotePO copyTravelNote(Long id, String userId) {
         TravelNotePO src = travelNoteMapper.selectById(id);
-        if (src == null) return null;
+        if (src == null || !Objects.equals(src.getUserId(), userId)) return null;
         src.setId(null); src.setUserId(userId == null ? "user_001" : userId); src.setSourceType("copy"); src.setStatus("draft"); src.setVisibility("private"); src.setShareToken(null); src.setTitle(src.getTitle() + " · 副本");
         return saveTravelNote(src);
     }
 
-    public void deleteTravelNote(Long id) { travelNoteMapper.deleteById(id); }
+    public void deleteTravelNote(Long id, String userId) {
+        int deleted = travelNoteMapper.delete(new LambdaQueryWrapper<TravelNotePO>()
+                .eq(TravelNotePO::getId, id)
+                .eq(TravelNotePO::getUserId, userId));
+        if (deleted == 0) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.NOT_FOUND, "travel note not found");
+        }
+    }
 
     public List<Map<String,Object>> searchUsers(String q) {
         String key = q == null ? "" : q.trim();
@@ -240,8 +301,11 @@ public class UserBizService {
     public void addComment(Long noteId, String userId, String content) { jdbcTemplate.update("INSERT INTO social_comment(note_id,user_id,content) VALUES(?,?,?)", noteId,userId,content); jdbcTemplate.update("UPDATE social_note SET comment_count=comment_count+1 WHERE id=?", noteId); }
     public List<Map<String,Object>> listComments(Long noteId) { return jdbcTemplate.queryForList("SELECT c.*, COALESCE(NULLIF(p.nickname,''),NULLIF(tp.name,''),'旅行者') nickname, COALESCE(NULLIF(p.avatar,''),NULLIF(p.avatar_url,''),'') avatar FROM social_comment c LEFT JOIN user_profile p ON p.public_id=c.user_id OR p.user_id=c.user_id LEFT JOIN user_travel_preference tp ON tp.user_id=c.user_id AND tp.preference_type='default' WHERE c.note_id=? ORDER BY c.created_at ASC", noteId); }
     public void requestFriend(String from, String to, String message) { jdbcTemplate.update("INSERT INTO social_friend_request(requester_id,receiver_id,message) VALUES(?,?,?) ON DUPLICATE KEY UPDATE status='pending',message=VALUES(message)", from,to,message == null ? "" : message); }
-    public Map<String,Object> publishSocialNote(Map<String,Object> body) {
-        String userId = valueOr(body.get("userId"), "user_001");
+    public Map<String,Object> publishSocialNote(Map<String,Object> body, String authenticatedUserId) {
+        if (body == null || authenticatedUserId == null || authenticatedUserId.isBlank()) {
+            throw new IllegalArgumentException("authenticated user is required");
+        }
+        String userId = authenticatedUserId;
         String tags = body.get("tags") instanceof java.util.Collection ? new com.fasterxml.jackson.databind.ObjectMapper().valueToTree(body.get("tags")).toString() : valueOr(body.get("tags"), "[]");
         String title = valueOr(body.get("title"), "旅行笔记");
         String content = valueOr(body.get("content"), "");
@@ -569,7 +633,9 @@ public class UserBizService {
 
     @Transactional
     public InspirationPO addInspiration(InspirationPO po) {
-        if (po.getUserId() == null || po.getUserId().isBlank()) po.setUserId("user_001");
+        if (po.getUserId() == null || po.getUserId().isBlank()) {
+            throw new IllegalArgumentException("userId is required");
+        }
         if (po.getName() == null) po.setName("");
         if (po.getImageUrl() == null) po.setImageUrl("");
         if (po.getQuote() == null) po.setQuote("");
@@ -583,13 +649,27 @@ public class UserBizService {
     }
 
     @Transactional
-    public void updateInspiration(InspirationPO po) {
+    public void updateInspiration(InspirationPO po, String userId) {
+        InspirationPO existing = inspirationMapper.selectOne(new LambdaQueryWrapper<InspirationPO>()
+                .eq(InspirationPO::getId, po.getId())
+                .eq(InspirationPO::getUserId, userId));
+        if (existing == null) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.NOT_FOUND, "inspiration not found");
+        }
+        po.setUserId(userId);
         inspirationMapper.updateById(po);
     }
 
     @Transactional
-    public void deleteInspiration(Long id) {
-        inspirationMapper.deleteById(id);
+    public void deleteInspiration(Long id, String userId) {
+        int deleted = inspirationMapper.delete(new LambdaQueryWrapper<InspirationPO>()
+                .eq(InspirationPO::getId, id)
+                .eq(InspirationPO::getUserId, userId));
+        if (deleted == 0) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.NOT_FOUND, "inspiration not found");
+        }
     }
 
     // ========== 旅程记录 ==========
@@ -615,10 +695,9 @@ public class UserBizService {
     /**
      * 获取单个旅程完整详情（含途经地点与图片）
      */
-    public JourneyDetailVO getJourneyDetail(Long id) {
-        JourneyPO j = journeyMapper.selectById(id);
-        if (j == null) return null;
-        return buildDetail(id);
+    public JourneyDetailVO getJourneyDetail(Long id, String userId) {
+        ownedJourney(id, userId);
+        return buildDetail(id, userId);
     }
 
     private JourneyDetailVO buildDetail(Long id) {
@@ -627,6 +706,25 @@ public class UserBizService {
                 .points(listJourneyPoints(id))
                 .images(listJourneyImages(id))
                 .build();
+    }
+
+    private JourneyDetailVO buildDetail(Long id, String userId) {
+        return JourneyDetailVO.builder()
+                .journey(ownedJourney(id, userId))
+                .points(listJourneyPoints(id))
+                .images(listJourneyImages(id))
+                .build();
+    }
+
+    private JourneyPO ownedJourney(Long id, String userId) {
+        JourneyPO journey = journeyMapper.selectOne(new LambdaQueryWrapper<JourneyPO>()
+                .eq(JourneyPO::getId, id)
+                .eq(JourneyPO::getUserId, userId));
+        if (journey == null) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.NOT_FOUND, "journey not found");
+        }
+        return journey;
     }
 
     @Transactional
@@ -647,27 +745,36 @@ public class UserBizService {
     }
 
     @Transactional
-    public void updateJourney(JourneyPO po) {
+    @Transactional
+    public void updateJourney(JourneyPO po, String userId) {
+        ownedJourney(po.getId(), userId);
+        po.setUserId(userId);
         journeyMapper.updateById(po);
     }
 
     @Transactional
-    public void deleteJourney(Long id) {
+    public void deleteJourney(Long id, String userId) {
+        ownedJourney(id, userId);
         journeyPointMapper.delete(new LambdaQueryWrapper<JourneyPointPO>().eq(JourneyPointPO::getJourneyId, id));
         journeyImageMapper.delete(new LambdaQueryWrapper<JourneyImagePO>().eq(JourneyImagePO::getJourneyId, id));
         journeyMapper.deleteById(id);
     }
 
     // ========== 途经地点 ==========
-    public List<JourneyPointPO> listJourneyPoints(Long journeyId) {
+    private List<JourneyPointPO> listJourneyPoints(Long journeyId) {
         LambdaQueryWrapper<JourneyPointPO> w = new LambdaQueryWrapper<>();
         w.eq(JourneyPointPO::getJourneyId, journeyId);
         w.orderByAsc(JourneyPointPO::getSortOrder);
         return journeyPointMapper.selectList(w);
     }
 
+    public List<JourneyPointPO> listJourneyPoints(Long journeyId, String userId) {
+        ownedJourney(journeyId, userId);
+        return listJourneyPoints(journeyId);
+    }
+
     @Transactional
-    public void saveJourneyPoints(Long journeyId, List<JourneyPointPO> points) {
+    private void saveJourneyPoints(Long journeyId, List<JourneyPointPO> points) {
         journeyPointMapper.delete(new LambdaQueryWrapper<JourneyPointPO>().eq(JourneyPointPO::getJourneyId, journeyId));
         for (JourneyPointPO p : points) {
             p.setJourneyId(journeyId);
@@ -681,21 +788,38 @@ public class UserBizService {
         }
     }
 
+    @Transactional
+    public void saveJourneyPoints(Long journeyId, List<JourneyPointPO> points, String userId) {
+        ownedJourney(journeyId, userId);
+        saveJourneyPoints(journeyId, points == null ? List.of() : points);
+    }
+
     // ========== 旅程照片 ==========
-    public List<JourneyImagePO> listJourneyImages(Long journeyId) {
+    private List<JourneyImagePO> listJourneyImages(Long journeyId) {
         LambdaQueryWrapper<JourneyImagePO> w = new LambdaQueryWrapper<>();
         w.eq(JourneyImagePO::getJourneyId, journeyId);
         w.orderByAsc(JourneyImagePO::getSortOrder);
         return journeyImageMapper.selectList(w);
     }
 
+    public List<JourneyImagePO> listJourneyImages(Long journeyId, String userId) {
+        ownedJourney(journeyId, userId);
+        return listJourneyImages(journeyId);
+    }
+
     @Transactional
-    public void saveJourneyImages(Long journeyId, List<JourneyImagePO> images) {
+    private void saveJourneyImages(Long journeyId, List<JourneyImagePO> images) {
         journeyImageMapper.delete(new LambdaQueryWrapper<JourneyImagePO>().eq(JourneyImagePO::getJourneyId, journeyId));
         for (JourneyImagePO img : images) {
             img.setJourneyId(journeyId);
             journeyImageMapper.insert(img);
         }
+    }
+
+    @Transactional
+    public void saveJourneyImages(Long journeyId, List<JourneyImagePO> images, String userId) {
+        ownedJourney(journeyId, userId);
+        saveJourneyImages(journeyId, images == null ? List.of() : images);
     }
 
     // ========== 用户头像 ==========
@@ -706,10 +830,18 @@ public class UserBizService {
 
     public String uploadAvatar(MultipartFile file, String userId) throws Exception {
         // 保存文件到用户家目录下的 travel-agent-uploads 目录
+        if (file == null || file.isEmpty() || file.getSize() > 5 * 1024 * 1024) {
+            throw new IllegalArgumentException("image is empty or larger than 5 MB");
+        }
         String fileName = file.getOriginalFilename();
-        String ext = fileName != null && fileName.contains(".") 
-            ? fileName.substring(fileName.lastIndexOf(".")) 
-            : ".jpg";
+        String ext = ".jpg";
+        if (fileName != null && fileName.contains(".")) {
+            String candidate = fileName.substring(fileName.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT);
+            if (!IMAGE_EXTENSIONS.contains(candidate)) {
+                throw new IllegalArgumentException("unsupported image extension");
+            }
+            ext = "." + candidate;
+        }
         String newFileName = UUID.randomUUID().toString().replace("-", "") + ext;
         
         String uploadDir = System.getProperty("user.home") + "/travel-agent-uploads/avatar/";

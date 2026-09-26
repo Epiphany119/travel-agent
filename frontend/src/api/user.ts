@@ -8,7 +8,7 @@ export interface ApiResult<T> {
 
 // 获取当前登录用户 ID
 export function getCurrentUserId(): string {
-  return localStorage.getItem('roamly_user_id') || 'user_001'
+  return localStorage.getItem('roamly_user_id') || ''
 }
 
 export interface Inspiration {
@@ -74,6 +74,16 @@ export interface TravelNote {
 export function listTravelNotes() { return request.get<unknown, ApiResult<TravelNote[]>>('/user/travel-notes', { params: { userId: getCurrentUserId() } }) }
 export function getTravelNote(id: number) { return request.get<unknown, ApiResult<TravelNote>>('/user/travel-notes/' + id) }
 export function saveTravelNote(data: TravelNote) { return request.post<unknown, ApiResult<TravelNote>>('/user/travel-notes', data) }
+export interface SaveAiPlanRequest {
+  target: 'inspiration' | 'journey'
+  note: TravelNote
+  inspiration?: Inspiration
+  journey?: Journey
+  points?: JourneyPoint[]
+}
+export function saveAiPlan(data: SaveAiPlanRequest) {
+  return request.post<unknown, ApiResult<any>>('/user/ai-plans/save', data)
+}
 export function copyTravelNote(id: number) { return request.post<unknown, ApiResult<TravelNote>>('/user/travel-notes/' + id + '/copy', null, { params: { userId: getCurrentUserId() } }) }
 export function getSharedTravelNote(token: string) { return request.get<unknown, ApiResult<TravelNote>>('/user/travel-notes/share/' + token) }
 export function deleteTravelNote(id: number) { return request.delete<unknown, ApiResult<unknown>>('/user/travel-notes/' + id) }
@@ -185,4 +195,3 @@ export function uploadImage(file: File, category: string = 'general') {
 }
 
 // ─── 向后兼容导出（不推荐，逐步迁移到 getCurrentUserId()）──
-export const USER_ID = 'user_001'

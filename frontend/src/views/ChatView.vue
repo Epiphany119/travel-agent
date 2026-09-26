@@ -2,7 +2,7 @@
 import { ref, computed, watch, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { addInspiration, addJourney, USER_ID, saveJourneyPoints, saveTravelNote } from '@/api/user'
+import { getCurrentUserId, saveAiPlan } from '@/api/user'
 import { renderMarkdown as renderSafeMarkdown } from '@/utils/markdown'
 import { subscribeA2AStream, fetchPoiImages, type TravelPlan } from '@/api/agent'
 import { useStreamStore } from '@/stores/stream'
@@ -85,6 +85,8 @@ async function addToSchedule(target: 'inspiration' | 'journey') {
   if (scheduling.value) return
   scheduling.value = true
   try {
+    const currentUserId = getCurrentUserId()
+    if (!currentUserId) throw new Error('current user is not ready')
     const result: any = travelPlan.value || { destination: destination.value }
     const noteContent = {
       overview: { destination: result.destination || destination.value, preferences: preferenceSummary.value },
@@ -93,21 +95,29 @@ async function addToSchedule(target: 'inspiration' | 'journey') {
       days: structuredDays.value.map((items: any[], i: number) => ({ day: i + 1, items })),
       reminders: [], packing: [], reflections: {}
     }
-    await saveTravelNote({ userId: USER_ID, title: `${result.destination || destination.value} · ${days.value}日旅行计划`, destination: result.destination || destination.value, noteType: target, sourceType: 'agent', totalDays: days.value, travelers: travelers.value, budget: budget.value, contentJson: JSON.stringify(noteContent), status: target === 'journey' ? 'planned' : 'draft' })
+    let planMarkdown = ''
     if (target === 'inspiration') {
-      const planMarkdown = structuredDays.value.map((items: any[], i: number) => {
+      planMarkdown = structuredDays.value.map((items: any[], i: number) => {
         const rows = items.map((a: any) => `- **${a.time || ''} ${a.name || ''}**\n  - 地点：${a.location || ''}\n  - 交通：${a.transport || ''}\n  - 备注：${a.notes || ''}\n  - 费用：${formatCost(a.cost)}`).join('\n')
         return `## Day ${i + 1}\n${rows}`
       }).join('\n\n')
-      const firstImage = structuredDays.value.flat().find((a: any) => a.image || a.imageUrl)?.image || structuredDays.value.flat().find((a: any) => a.imageUrl)?.imageUrl || ''
-      await addInspiration({ userId: USER_ID, name: result.destination || destination.value, imageUrl: firstImage, description: planMarkdown || 'Roamly 为你生成的旅行方案', quote: preferenceSummary.value, tags: 'AI规划,旅行计划', estimatedBudget: confirmedPlanCost.value, status: 0 })
-    } else {
-      const start = new Date(); start.setDate(start.getDate() + 1)
-      const end = new Date(start); end.setDate(start.getDate() + days.value - 1)
-      const points = structuredDays.value.flat().filter((a: any) => a.type === 'sightseeing').map((a: any, i: number) => ({ name: a.name, visitDate: a.time, description: a.notes || a.location, sortOrder: i }))
-      const created = await addJourney({ userId: USER_ID, destination: result.destination || destination.value, totalDays: days.value, startDate: start.toISOString().slice(0,10), endDate: end.toISOString().slice(0,10), totalCost: confirmedPlanCost.value, summary: preferenceSummary.value, travelType: travelStyle.value, status: 1 })
-      if (created.data?.id && points.length) await saveJourneyPoints(created.data.id, points)
     }
+    const start = new Date(); start.setDate(start.getDate() + 1)
+    const end = new Date(start); end.setDate(start.getDate() + days.value - 1)
+    const points = structuredDays.value.flat().filter((a: any) => a.type === 'sightseeing').map((a: any, i: number) => {
+      const dayIndex = Math.max(0, Number(a.day ?? a.dayNo ?? 1) - 1)
+      const visitDate = new Date(start)
+      visitDate.setDate(start.getDate() + dayIndex)
+      return { name: a.name, visitDate: visitDate.toISOString().slice(0, 10), description: a.notes || a.location, sortOrder: i }
+    })
+    const firstImage = structuredDays.value.flat().find((a: any) => a.image || a.imageUrl)?.image || structuredDays.value.flat().find((a: any) => a.imageUrl)?.imageUrl || ''
+    await saveAiPlan({
+      target,
+      note: { userId: currentUserId, title: `${result.destination || destination.value} · ${days.value}日旅行计划`, destination: result.destination || destination.value, noteType: target, sourceType: 'agent', totalDays: days.value, travelers: travelers.value, budget: budget.value, contentJson: JSON.stringify(noteContent), status: target === 'journey' ? 'planned' : 'draft' },
+      inspiration: target === 'inspiration' ? { userId: currentUserId, name: result.destination || destination.value, imageUrl: firstImage, description: planMarkdown || 'Roamly 为你生成的旅行方案', quote: preferenceSummary.value, tags: 'AI规划,旅行计划', estimatedBudget: confirmedPlanCost.value, status: 0 } : undefined,
+      journey: target === 'journey' ? { userId: currentUserId, destination: result.destination || destination.value, totalDays: days.value, startDate: start.toISOString().slice(0, 10), endDate: end.toISOString().slice(0, 10), totalCost: confirmedPlanCost.value, summary: preferenceSummary.value, travelType: travelStyle.value, status: 1 } : undefined,
+      points: target === 'journey' ? points : []
+    })
     ElMessage.success(target === 'inspiration' ? '已加入灵感目的地' : '已加入我的旅程')
   } catch { ElMessage.error('加入失败，请稍后重试') } finally { scheduling.value = false }
 }

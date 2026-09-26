@@ -126,10 +126,25 @@ public class QuestionnaireService {
         return node;
     }
 
-    public void handleAnswer(String sessionId, int stepIndex, String answer, SseEmitter emitter) {
+    public void handleAnswer(String sessionId, int stepIndex, String answer, SseEmitter emitter, String authenticatedUserId) {
         AgentQuestionnairePO po = questionnaireMapper.findBySessionId(sessionId);
         if (po == null) { sendEvent(emitter, "error", Map.of("message", "会话不存在")); emitter.complete(); return; }
+        if (authenticatedUserId == null || !authenticatedUserId.equals(po.getUserId())) {
+            sendEvent(emitter, "error", Map.of("message", "无权访问该问卷"));
+            emitter.complete();
+            return;
+        }
         if (stepIndex < 0 || stepIndex >= STEPS.size()) { sendEvent(emitter, "error", Map.of("message", "非法步骤")); emitter.complete(); return; }
+        if (!"active".equals(po.getStatus())) {
+            sendEvent(emitter, "error", Map.of("message", "问卷已结束"));
+            emitter.complete();
+            return;
+        }
+        if (stepIndex != po.getCurrentStep()) {
+            sendEvent(emitter, "error", Map.of("message", "请按顺序回答问题"));
+            emitter.complete();
+            return;
+        }
 
         try {
             QuestionnaireStep step = STEPS.get(stepIndex);

@@ -81,6 +81,8 @@ SSE 请求必须设置 `Accept: text/event-stream`，浏览器端用 `AbortContr
 
 这是“数据库笔记”链路，数据落在 `note_document`，内容由笔记编辑器维护；不要把本地源文件快照误认为数据库笔记。
 
+AI 计划保存使用 `POST /api/user/ai-plans/save`。该接口从 Token 获取用户，不接受客户端提供的操作者身份，并在一个事务中保存旅行笔记、灵感或旅程及旅程点位。
+
 | 方法 | 路径 | 主要参数 | 说明 |
 |---|---|---|---|
 | `GET` | `/api/notes?userId=...` | `userId` 可选 | 获取用户笔记列表，不含完整内容块 |

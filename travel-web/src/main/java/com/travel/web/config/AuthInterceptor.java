@@ -15,9 +15,13 @@ public class AuthInterceptor implements HandlerInterceptor {
         String token = header != null && header.startsWith("Bearer ") ? header.substring(7).trim() : null;
         String userId = tokens.verify(token);
         if (userId != null) req.setAttribute(USER_ID, userId);
-        boolean privatePath = req.getRequestURI().startsWith(req.getContextPath() + "/api/notes")
-                || req.getRequestURI().matches(".*/api/user/(preferences|nickname|avatar|reputation|social/.*|journeys|inspirations|travel-notes).*");
-        boolean publicPath = req.getRequestURI().contains("/share/") || req.getRequestURI().matches(".*/api/user/(social/notes|users/[^/]+/profile)$");
+        String path = req.getRequestURI();
+        boolean privatePath = path.startsWith(req.getContextPath() + "/api/notes")
+                || path.startsWith(req.getContextPath() + "/api/agent")
+                || path.startsWith(req.getContextPath() + "/a2a/")
+                || path.matches(".*/api/user/(preferences|nickname|avatar|reputation|social/.*|journeys|inspirations|travel-notes|ai-plans|users/[^/]+/friend-request|upload).*");
+        boolean publicPath = path.contains("/share/")
+                || ("GET".equalsIgnoreCase(req.getMethod()) && path.matches(".*/api/user/(social/notes|users/[^/]+/profile)$"));
         if (privatePath && !publicPath && userId == null) {
             res.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
             return false;

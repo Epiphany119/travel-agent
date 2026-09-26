@@ -35,8 +35,8 @@ public class AgentApi {
      * 发送消息
      */
     @PostMapping("/messages")
-    public ApiResult<MessageResponse> sendMessage(@Valid @RequestBody SendMessageRequest request) {
-        return ApiResult.success(agentService.sendMessage(request));
+    public ApiResult<MessageResponse> sendMessage(@Valid @RequestBody SendMessageRequest request, HttpServletRequest http) {
+        return ApiResult.success(agentService.sendMessage(request, currentUserId(http)));
     }
 
     /**
@@ -47,33 +47,47 @@ public class AgentApi {
             @RequestParam String sessionId,
             @RequestParam String toolCallId,
             @RequestParam String toolName,
-            @RequestBody Object result) {
-        return ApiResult.success(agentService.handleToolResult(sessionId, toolCallId, toolName, result));
+            @RequestBody Object result,
+            HttpServletRequest http) {
+        return ApiResult.success(agentService.handleToolResult(sessionId, toolCallId, toolName, result, currentUserId(http)));
     }
 
     /**
      * 获取会话消息历史
      */
     @GetMapping("/sessions/{sessionId}/messages")
-    public ApiResult<List<MessageResponse>> getMessages(@PathVariable String sessionId) {
-        return ApiResult.success(agentService.getMessages(sessionId));
+    public ApiResult<List<MessageResponse>> getMessages(@PathVariable String sessionId, HttpServletRequest http) {
+        return ApiResult.success(agentService.getMessages(sessionId, currentUserId(http)));
     }
 
     /**
      * 获取用户的所有会话
      */
     @GetMapping("/sessions")
-    public ApiResult<List<SessionResponse>> getUserSessions(
-            @RequestParam(required = false, defaultValue = "1") Long userId) {
-        return ApiResult.success(agentService.getUserSessions(userId));
+    public ApiResult<List<SessionResponse>> getUserSessions(HttpServletRequest http) {
+        return ApiResult.success(agentService.getUserSessions(currentUserId(http)));
     }
 
     /**
      * 删除会话
      */
     @DeleteMapping("/sessions/{sessionId}")
-    public ApiResult<Void> deleteSession(@PathVariable String sessionId) {
-        agentService.deleteSession(sessionId);
+    public ApiResult<Void> deleteSession(@PathVariable String sessionId, HttpServletRequest http) {
+        agentService.deleteSession(sessionId, currentUserId(http));
         return ApiResult.success();
+    }
+
+    private Long currentUserId(HttpServletRequest request) {
+        Object raw = request.getAttribute("authenticatedUserId");
+        if (raw == null || raw.toString().isBlank()) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.UNAUTHORIZED, "请先登录");
+        }
+        try {
+            return Long.valueOf(raw.toString());
+        } catch (NumberFormatException ex) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.UNAUTHORIZED, "用户身份无效");
+        }
     }
 }

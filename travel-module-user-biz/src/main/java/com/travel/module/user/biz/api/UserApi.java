@@ -2,6 +2,7 @@ package com.travel.module.user.biz.api;
 
 import com.travel.common.core.result.ApiResult;
 import com.travel.module.user.biz.domain.service.UserBizService;
+import com.travel.module.user.biz.api.dto.SaveAiPlanRequest;
 import com.travel.module.user.biz.infra.persistence.InspirationPO;
 import com.travel.module.user.biz.infra.persistence.JourneyPO;
 import com.travel.module.user.biz.infra.persistence.JourneyPointPO;
@@ -10,9 +11,11 @@ import com.travel.module.user.biz.infra.persistence.UserPreferencePO;
 import com.travel.module.user.biz.infra.persistence.TravelNotePO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import jakarta.servlet.http.HttpServletRequest;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -34,6 +37,9 @@ public class UserApi {
 
     private final UserBizService userBizService;
     private final JdbcTemplate jdbcTemplate;
+
+    @Value("${travel.security.moderator-user-ids:}")
+    private String moderatorUserIds;
 
     // =====================================================================
     // 一、社区 / 社交
@@ -96,8 +102,8 @@ public class UserApi {
     public ApiResult<?> react(
             @PathVariable Long id,
             @RequestParam String type,
-            @RequestParam(defaultValue = "user_001") String userId) {
-        userBizService.reactNote(id, userId, type);
+            HttpServletRequest request) {
+        userBizService.reactNote(id, currentUserId(request), type);
         return ApiResult.success("OK");
     }
 
@@ -123,9 +129,9 @@ public class UserApi {
     @PostMapping("/social/notes/{id}/comments")
     public ApiResult<?> comment(
             @PathVariable Long id,
-            @RequestParam(defaultValue = "user_001") String userId,
-            @RequestBody Map<String, String> body) {
-        userBizService.addComment(id, userId, body.getOrDefault("content", ""));
+            @RequestBody Map<String, String> body,
+            HttpServletRequest request) {
+        userBizService.addComment(id, currentUserId(request), body.getOrDefault("content", ""));
         return ApiResult.success("OK");
     }
 
@@ -133,48 +139,48 @@ public class UserApi {
     @PostMapping("/social/notes/{id}/revisions")
     public ApiResult<?> createRevision(
             @PathVariable Long id,
-            @RequestParam(defaultValue = "user_001") String userId,
-            @RequestBody Map<String, Object> body) {
-        return ApiResult.success(userBizService.createNoteRevision(id, userId, body));
+            @RequestBody Map<String, Object> body,
+            HttpServletRequest request) {
+        return ApiResult.success(userBizService.createNoteRevision(id, currentUserId(request), body));
     }
 
     @GetMapping("/social/notes/{id}/revisions")
     public ApiResult<?> revisions(
             @PathVariable Long id,
-            @RequestParam(defaultValue = "user_001") String userId) {
-        return ApiResult.success(userBizService.listNoteRevisions(id, userId));
+            HttpServletRequest request) {
+        return ApiResult.success(userBizService.listNoteRevisions(id, currentUserId(request)));
     }
 
     @PutMapping("/social/revisions/{revisionId}/submit")
     public ApiResult<?> submitRevision(
             @PathVariable Long revisionId,
-            @RequestParam(defaultValue = "user_001") String userId,
-            @RequestBody Map<String, Object> body) {
-        return ApiResult.success(userBizService.submitNoteRevision(revisionId, userId, body));
+            @RequestBody Map<String, Object> body,
+            HttpServletRequest request) {
+        return ApiResult.success(userBizService.submitNoteRevision(revisionId, currentUserId(request), body));
     }
 
     /** 原作者审核协作版本；合并时才会更新 social_note 的公开内容和状态码。 */
     @PutMapping("/social/revisions/{revisionId}")
     public ApiResult<?> reviewRevision(
             @PathVariable Long revisionId,
-            @RequestParam(defaultValue = "user_001") String userId,
-            @RequestBody Map<String, String> body) {
-        return ApiResult.success(userBizService.reviewNoteRevision(revisionId, userId, body.getOrDefault("status", "rejected"), body.getOrDefault("message", "")));
+            @RequestBody Map<String, String> body,
+            HttpServletRequest request) {
+        return ApiResult.success(userBizService.reviewNoteRevision(revisionId, currentUserId(request), body.getOrDefault("status", "rejected"), body.getOrDefault("message", "")));
     }
 
     /** 原作者举报疑似侵权帖子；Agent 会先做相似度判定，高相似度自动下架，中高相似度进入平台队列。 */
     @PostMapping("/social/notes/{id}/reports")
     public ApiResult<?> reportSocialNote(
             @PathVariable Long id,
-            @RequestParam(defaultValue = "user_001") String reporterId,
-            @RequestBody(required = false) Map<String, Object> body) {
-        return ApiResult.success(userBizService.reportSocialNote(id, reporterId, body == null ? new HashMap<>() : body));
+            @RequestBody(required = false) Map<String, Object> body,
+            HttpServletRequest request) {
+        return ApiResult.success(userBizService.reportSocialNote(id, currentUserId(request), body == null ? new HashMap<>() : body));
     }
 
     /** 获取当前用户信誉分。 */
     @GetMapping("/reputation")
-    public ApiResult<?> reputation(@RequestParam(defaultValue = "user_001") String userId) {
-        return ApiResult.success(userBizService.getReputation(userId));
+    public ApiResult<?> reputation(HttpServletRequest request) {
+        return ApiResult.success(userBizService.getReputation(currentUserId(request)));
     }
 
     /** 平台后台审核队列中的帖子；普通用户端不调用此接口。 */
@@ -182,8 +188,16 @@ public class UserApi {
     public ApiResult<?> platformReview(
             @PathVariable Long id,
             @RequestParam(defaultValue = "platform") String reviewerId,
-            @RequestBody Map<String, String> body) {
-        return ApiResult.success(userBizService.reviewPlatformNote(id, reviewerId, body.getOrDefault("status", "rejected"), body.getOrDefault("message", "")));
+            @RequestBody Map<String, String> body,
+            HttpServletRequest request) {
+        String currentUserId = currentUserId(request);
+        Set<String> moderators = Arrays.stream(moderatorUserIds.split(","))
+                .map(String::trim).filter(value -> !value.isBlank()).collect(Collectors.toSet());
+        if (!moderators.contains(currentUserId)) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.FORBIDDEN, "无平台审核权限");
+        }
+        return ApiResult.success(userBizService.reviewPlatformNote(id, currentUserId, body.getOrDefault("status", "rejected"), body.getOrDefault("message", "")));
     }
 
     /**
@@ -197,10 +211,10 @@ public class UserApi {
     @PostMapping("/users/{id}/friend-request")
     public ApiResult<?> friend(
             @PathVariable String id,
-            @RequestParam(defaultValue = "user_001") String from,
-            @RequestBody(required = false) Map<String, String> body) {
+            @RequestBody(required = false) Map<String, String> body,
+            HttpServletRequest request) {
         String message = body == null ? "" : body.getOrDefault("message", "");
-        userBizService.requestFriend(from, id, message);
+        userBizService.requestFriend(currentUserId(request), id, message);
         return ApiResult.success("OK");
     }
 
@@ -211,25 +225,25 @@ public class UserApi {
      * @return 发布后的笔记信息
      */
     @PostMapping("/social/notes")
-    public ApiResult<?> publishSocialNote(@RequestBody Map<String, Object> body) {
-        return ApiResult.success(userBizService.publishSocialNote(body));
+    public ApiResult<?> publishSocialNote(@RequestBody Map<String, Object> body, HttpServletRequest request) {
+        return ApiResult.success(userBizService.publishSocialNote(body, currentUserId(request)));
     }
 
     /** 更新自己发布的社区笔记，保持“打开即编辑”的交互闭环。 */
     @PutMapping("/social/notes/{id}")
     public ApiResult<?> updateSocialNote(
             @PathVariable Long id,
-            @RequestParam(defaultValue = "user_001") String userId,
-            @RequestBody Map<String, Object> body) {
-        return ApiResult.success(userBizService.updateSocialNote(id, userId, body));
+            @RequestBody Map<String, Object> body,
+            HttpServletRequest request) {
+        return ApiResult.success(userBizService.updateSocialNote(id, currentUserId(request), body));
     }
 
     /** 将社区笔记复制成当前用户的私有旅行笔记。 */
     @PostMapping("/social/notes/{id}/copy")
     public ApiResult<?> copySocialNote(
             @PathVariable Long id,
-            @RequestParam(defaultValue = "user_001") String userId) {
-        return ApiResult.success(userBizService.copySocialNote(id, userId));
+            HttpServletRequest request) {
+        return ApiResult.success(userBizService.copySocialNote(id, currentUserId(request)));
     }
 
     // =====================================================================
@@ -244,8 +258,8 @@ public class UserApi {
      */
     @GetMapping("/travel-notes")
     public ApiResult<?> listTravelNotes(
-            @RequestParam(defaultValue = "user_001") String userId) {
-        return ApiResult.success(userBizService.listTravelNotes(userId));
+            HttpServletRequest request) {
+        return ApiResult.success(userBizService.listTravelNotes(currentUserId(request)));
     }
 
     /**
@@ -255,8 +269,8 @@ public class UserApi {
      * @return 笔记详情
      */
     @GetMapping("/travel-notes/{id}")
-    public ApiResult<?> getTravelNote(@PathVariable Long id) {
-        return ApiResult.success(userBizService.getTravelNote(id));
+    public ApiResult<?> getTravelNote(@PathVariable Long id, HttpServletRequest request) {
+        return ApiResult.success(userBizService.getTravelNote(id, currentUserId(request)));
     }
 
     /**
@@ -266,8 +280,14 @@ public class UserApi {
      * @return 保存后的笔记
      */
     @PostMapping("/travel-notes")
-    public ApiResult<?> saveTravelNote(@RequestBody TravelNotePO note) {
+    public ApiResult<?> saveTravelNote(@RequestBody TravelNotePO note, HttpServletRequest request) {
+        note.setUserId(currentUserId(request));
         return ApiResult.success(userBizService.saveTravelNote(note));
+    }
+
+    @PostMapping("/ai-plans/save")
+    public ApiResult<?> saveAiPlan(@RequestBody SaveAiPlanRequest request, HttpServletRequest http) {
+        return ApiResult.success(userBizService.saveAiPlan(request, currentUserId(http)));
     }
 
     /**
@@ -280,8 +300,8 @@ public class UserApi {
     @PostMapping("/travel-notes/{id}/copy")
     public ApiResult<?> copyTravelNote(
             @PathVariable Long id,
-            @RequestParam(defaultValue = "user_001") String userId) {
-        return ApiResult.success(userBizService.copyTravelNote(id, userId));
+            HttpServletRequest request) {
+        return ApiResult.success(userBizService.copyTravelNote(id, currentUserId(request)));
     }
 
     /**
@@ -302,8 +322,8 @@ public class UserApi {
      * @return 操作结果 "OK"
      */
     @DeleteMapping("/travel-notes/{id}")
-    public ApiResult<?> deleteTravelNote(@PathVariable Long id) {
-        userBizService.deleteTravelNote(id);
+    public ApiResult<?> deleteTravelNote(@PathVariable Long id, HttpServletRequest request) {
+        userBizService.deleteTravelNote(id, currentUserId(request));
         return ApiResult.success("OK");
     }
 
@@ -319,8 +339,8 @@ public class UserApi {
      */
     @GetMapping("/inspirations")
     public ApiResult<?> listInspirations(
-            @RequestParam(defaultValue = "user_001") String userId) {
-        return ApiResult.success(userBizService.listInspirations(userId));
+            HttpServletRequest request) {
+        return ApiResult.success(userBizService.listInspirations(currentUserId(request)));
     }
 
     /**
@@ -330,10 +350,8 @@ public class UserApi {
      * @return 新增后的灵感记录
      */
     @PostMapping("/inspirations")
-    public ApiResult<?> addInspiration(@RequestBody InspirationPO po) {
-        if (po.getUserId() == null) {
-            po.setUserId("user_001");
-        }
+    public ApiResult<?> addInspiration(@RequestBody InspirationPO po, HttpServletRequest request) {
+        po.setUserId(currentUserId(request));
         return ApiResult.success(userBizService.addInspiration(po));
     }
 
@@ -347,9 +365,10 @@ public class UserApi {
     @PutMapping("/inspirations/{id}")
     public ApiResult<?> updateInspiration(
             @PathVariable Long id,
-            @RequestBody InspirationPO po) {
+            @RequestBody InspirationPO po,
+            HttpServletRequest request) {
         po.setId(id);
-        userBizService.updateInspiration(po);
+        userBizService.updateInspiration(po, currentUserId(request));
         return ApiResult.success("OK");
     }
 
@@ -360,8 +379,8 @@ public class UserApi {
      * @return 操作结果 "OK"
      */
     @DeleteMapping("/inspirations/{id}")
-    public ApiResult<?> deleteInspiration(@PathVariable Long id) {
-        userBizService.deleteInspiration(id);
+    public ApiResult<?> deleteInspiration(@PathVariable Long id, HttpServletRequest request) {
+        userBizService.deleteInspiration(id, currentUserId(request));
         return ApiResult.success("OK");
     }
 
@@ -377,8 +396,8 @@ public class UserApi {
      */
     @GetMapping("/journeys")
     public ApiResult<?> listJourneys(
-            @RequestParam(defaultValue = "user_001") String userId) {
-        return ApiResult.success(userBizService.listJourneyDetails(userId));
+            HttpServletRequest request) {
+        return ApiResult.success(userBizService.listJourneyDetails(currentUserId(request)));
     }
 
     /**
@@ -388,8 +407,8 @@ public class UserApi {
      * @return 旅程详情
      */
     @GetMapping("/journeys/{id}")
-    public ApiResult<?> getJourney(@PathVariable Long id) {
-        return ApiResult.success(userBizService.getJourneyDetail(id));
+    public ApiResult<?> getJourney(@PathVariable Long id, HttpServletRequest request) {
+        return ApiResult.success(userBizService.getJourneyDetail(id, currentUserId(request)));
     }
 
     /**
@@ -399,10 +418,8 @@ public class UserApi {
      * @return 新增后的旅程
      */
     @PostMapping("/journeys")
-    public ApiResult<?> addJourney(@RequestBody JourneyPO po) {
-        if (po.getUserId() == null) {
-            po.setUserId("user_001");
-        }
+    public ApiResult<?> addJourney(@RequestBody JourneyPO po, HttpServletRequest request) {
+        po.setUserId(currentUserId(request));
         return ApiResult.success(userBizService.addJourney(po));
     }
 
@@ -416,9 +433,10 @@ public class UserApi {
     @PutMapping("/journeys/{id}")
     public ApiResult<?> updateJourney(
             @PathVariable Long id,
-            @RequestBody JourneyPO po) {
+            @RequestBody JourneyPO po,
+            HttpServletRequest request) {
         po.setId(id);
-        userBizService.updateJourney(po);
+        userBizService.updateJourney(po, currentUserId(request));
         return ApiResult.success("OK");
     }
 
@@ -429,8 +447,8 @@ public class UserApi {
      * @return 操作结果 "OK"
      */
     @DeleteMapping("/journeys/{id}")
-    public ApiResult<?> deleteJourney(@PathVariable Long id) {
-        userBizService.deleteJourney(id);
+    public ApiResult<?> deleteJourney(@PathVariable Long id, HttpServletRequest request) {
+        userBizService.deleteJourney(id, currentUserId(request));
         return ApiResult.success("OK");
     }
 
@@ -441,8 +459,8 @@ public class UserApi {
      * @return 途经地点列表
      */
     @GetMapping("/journeys/{id}/points")
-    public ApiResult<?> listJourneyPoints(@PathVariable Long id) {
-        return ApiResult.success(userBizService.listJourneyPoints(id));
+    public ApiResult<?> listJourneyPoints(@PathVariable Long id, HttpServletRequest request) {
+        return ApiResult.success(userBizService.listJourneyPoints(id, currentUserId(request)));
     }
 
     /**
@@ -455,8 +473,9 @@ public class UserApi {
     @PostMapping("/journeys/{id}/points")
     public ApiResult<?> saveJourneyPoints(
             @PathVariable Long id,
-            @RequestBody List<JourneyPointPO> points) {
-        userBizService.saveJourneyPoints(id, points);
+            @RequestBody List<JourneyPointPO> points,
+            HttpServletRequest request) {
+        userBizService.saveJourneyPoints(id, points, currentUserId(request));
         return ApiResult.success("OK");
     }
 
@@ -467,8 +486,8 @@ public class UserApi {
      * @return 图片列表
      */
     @GetMapping("/journeys/{id}/images")
-    public ApiResult<?> listJourneyImages(@PathVariable Long id) {
-        return ApiResult.success(userBizService.listJourneyImages(id));
+    public ApiResult<?> listJourneyImages(@PathVariable Long id, HttpServletRequest request) {
+        return ApiResult.success(userBizService.listJourneyImages(id, currentUserId(request)));
     }
 
     /**
@@ -481,8 +500,9 @@ public class UserApi {
     @PostMapping("/journeys/{id}/images")
     public ApiResult<?> saveJourneyImages(
             @PathVariable Long id,
-            @RequestBody List<JourneyImagePO> images) {
-        userBizService.saveJourneyImages(id, images);
+            @RequestBody List<JourneyImagePO> images,
+            HttpServletRequest request) {
+        userBizService.saveJourneyImages(id, images, currentUserId(request));
         return ApiResult.success("OK");
     }
 
@@ -507,8 +527,8 @@ public class UserApi {
      * @return 偏好信息（含 email / username / name 字段）
      */
     @GetMapping("/preferences")
-    public ApiResult<?> getPreferences(
-            @RequestParam(defaultValue = "user_001") String userId) {
+    public ApiResult<?> getPreferences(HttpServletRequest request) {
+        String userId = currentUserId(request);
         UserPreferencePO pref = userBizService.getPreference(userId);
 
         // 查询 auth_account 表获取邮箱和用户名
@@ -585,10 +605,8 @@ public class UserApi {
      * @return 操作结果 "OK"
      */
     @PutMapping("/preferences")
-    public ApiResult<?> savePreferences(@RequestBody UserPreferencePO po) {
-        if (po.getUserId() == null) {
-            po.setUserId("user_001");
-        }
+    public ApiResult<?> savePreferences(@RequestBody UserPreferencePO po, HttpServletRequest request) {
+        po.setUserId(currentUserId(request));
         userBizService.savePreference(po);
         return ApiResult.success("OK");
     }
@@ -604,9 +622,8 @@ public class UserApi {
      * @return {"nickname": "..."}
      */
     @GetMapping("/nickname")
-    public ApiResult<?> getNickname(
-            @RequestParam(defaultValue = "user_001") String userId) {
-        return ApiResult.success(Map.of("nickname", userBizService.getUserNickname(userId)));
+    public ApiResult<?> getNickname(HttpServletRequest request) {
+        return ApiResult.success(Map.of("nickname", userBizService.getUserNickname(currentUserId(request))));
     }
 
     /**
@@ -618,13 +635,13 @@ public class UserApi {
      */
     @PutMapping("/nickname")
     public ApiResult<?> updateNickname(
-            @RequestParam(defaultValue = "user_001") String userId,
-            @RequestBody Map<String, String> body) {
+            @RequestBody Map<String, String> body,
+            HttpServletRequest request) {
         String nickname = body.get("nickname");
         if (nickname == null || nickname.isBlank()) {
             return ApiResult.error("昵称不能为空");
         }
-        userBizService.updateNickname(userId, nickname);
+        userBizService.updateNickname(currentUserId(request), nickname);
         return ApiResult.success("OK");
     }
 
@@ -642,9 +659,9 @@ public class UserApi {
     @PostMapping("/avatar")
     public ApiResult<?> uploadAvatar(
             @RequestParam("file") MultipartFile file,
-            @RequestParam(defaultValue = "user_001") String userId) {
+            HttpServletRequest request) {
         try {
-            String avatarUrl = userBizService.uploadAvatar(file, userId);
+            String avatarUrl = userBizService.uploadAvatar(file, currentUserId(request));
             return ApiResult.success(Map.of("avatar", avatarUrl));
         } catch (Exception e) {
             return ApiResult.error("上传失败: " + e.getMessage());
@@ -658,8 +675,8 @@ public class UserApi {
      * @return {"avatar": "相对路径"}；无头像时为空串
      */
     @GetMapping("/avatar")
-    public ApiResult<?> getAvatar(
-            @RequestParam(defaultValue = "user_001") String userId) {
+    public ApiResult<?> getAvatar(HttpServletRequest request) {
+        String userId = currentUserId(request);
         String avatar = userBizService.getUserProfile(userId);
         return ApiResult.success(Map.of("avatar", avatar != null ? avatar : ""));
     }
@@ -699,10 +716,23 @@ public class UserApi {
             @RequestParam("file") MultipartFile file,
             @RequestParam(defaultValue = "general") String category) {
         try {
-            String url = userBizService.uploadAvatar(file, "temp");
+            Set<String> allowedCategories = Set.of("general", "inspiration", "journey");
+            if (!allowedCategories.contains(category)) {
+                return ApiResult.error("不支持的图片分类");
+            }
+            String url = userBizService.uploadImage(file, category);
             return ApiResult.success(Map.of("url", url));
         } catch (Exception e) {
             return ApiResult.error("上传失败: " + e.getMessage());
         }
+    }
+
+    private String currentUserId(HttpServletRequest request) {
+        Object value = request.getAttribute("authenticatedUserId");
+        if (value == null || value.toString().isBlank()) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.UNAUTHORIZED, "请先登录");
+        }
+        return value.toString();
     }
 }

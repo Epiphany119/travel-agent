@@ -71,7 +71,7 @@ public class EmailVerificationService {
         message.setText("您的验证码是：" + code + "，5 分钟内有效。请勿泄露给他人。");
 
         try {
-            log.info("发送验证码邮件: to={}, code={}, from={}", email, code, sender);
+            log.info("发送验证码邮件: to={}, from={}", email, sender);
             mailSender.send(message);
             log.info("验证码邮件发送成功: to={}", email);
         } catch (MailException e) {

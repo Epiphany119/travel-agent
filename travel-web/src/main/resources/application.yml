@@ -20,7 +20,7 @@ spring:
     url: ${TRAVEL_DB_URL:jdbc:mysql://localhost:3306/travel_agent?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true}
     driver-class-name: com.mysql.cj.jdbc.Driver
     username: ${TRAVEL_DB_USERNAME:epiphany}
-    password: ${TRAVEL_DB_PASSWORD:123456}
+    password: ${TRAVEL_DB_PASSWORD:}
 
   # QQ 邮箱 SMTP 配置 - 可发送至任何邮箱
   mail:
@@ -76,6 +76,8 @@ mybatis-plus:
 
   # 旅行规划 Agent 配置
 travel:
+  security:
+    moderator-user-ids: ${TRAVEL_MODERATOR_USER_IDS:}
   # MCP Server 配置
   mcp:
     weather-url: ${WEATHER_MCP_URL:http://localhost:8081}
@@ -130,4 +132,4 @@ logging:
   level:
     com.travel: INFO
     # 开启邮件发送调试日志，排查问题时使用
-    org.springframework.mail: DEBUG
+    org.springframework.mail: WARN

@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import jakarta.servlet.http.HttpServletRequest;
 
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
@@ -46,8 +47,8 @@ public class AgentQuestionnaireController {
      * 创建会话
      */
     @PostMapping("/start")
-    public Object start(@RequestBody(required = false) Map<String, String> body) {
-        String userId = body != null ? body.get("userId") : null;
+    public Object start(@RequestBody(required = false) Map<String, String> body, HttpServletRequest request) {
+        String userId = authenticatedUserId(request);
         return questionnaireService.startSession(userId);
     }
 
@@ -69,9 +70,11 @@ public class AgentQuestionnaireController {
     @PostMapping(value = "/{sessionId}/answer", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter answer(@PathVariable String sessionId,
                              @RequestParam int step,
-                             @RequestParam String answer) {
+                             @RequestParam String answer,
+                             HttpServletRequest request) {
         SseEmitter emitter = new SseEmitter(SSE_TIMEOUT);
         final String safeAnswer = answer == null ? "" : answer;
+        final String currentUserId = authenticatedUserId(request);
         log.info("问卷问答: sessionId={}, step={}, answer(raw) length={}", sessionId, step, safeAnswer.length());
 
         // 注册超时和完成回调
@@ -86,7 +89,7 @@ public class AgentQuestionnaireController {
         try {
             executor.execute(() -> {
                 try {
-                    questionnaireService.handleAnswer(sessionId, step, safeAnswer, emitter);
+                    questionnaireService.handleAnswer(sessionId, step, safeAnswer, emitter, currentUserId);
                 } catch (Exception e) {
                     log.error("问卷问答处理异常: sessionId={}, step={}", sessionId, step, e);
                     try {
@@ -103,5 +106,14 @@ public class AgentQuestionnaireController {
         }
 
         return emitter;
+    }
+
+    private String authenticatedUserId(HttpServletRequest request) {
+        Object value = request.getAttribute("authenticatedUserId");
+        if (value == null || value.toString().isBlank()) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.UNAUTHORIZED, "请先登录");
+        }
+        return value.toString();
     }
 }

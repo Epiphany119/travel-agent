@@ -66,6 +66,6 @@ public class GlobalExceptionHandler {
         log.error("系统异常", ex);
         return ResponseEntity
                 .status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(ApiResult.error(500, "系统异常: " + ex.getMessage()));
+                .body(ApiResult.error(500, "系统暂时不可用，请稍后重试"));
     }
 }

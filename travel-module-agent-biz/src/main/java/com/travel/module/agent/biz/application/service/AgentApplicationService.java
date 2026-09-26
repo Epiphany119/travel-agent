@@ -69,8 +69,9 @@ public class AgentApplicationService {
     /**
      * 发送消息并获取响应
      */
-    public MessageResponse sendMessage(SendMessageRequest request) {
+    public MessageResponse sendMessage(SendMessageRequest request, Long authenticatedUserId) {
         ChatSession session = sessionRepository.findBySessionId(request.getSessionId());
+        requireOwner(session, authenticatedUserId);
         if (session == null) {
             throw new RuntimeException("会话不存在");
         }
@@ -92,9 +93,10 @@ public class AgentApplicationService {
     /**
      * 处理工具调用结果
      */
-    public MessageResponse handleToolResult(String sessionId, String toolCallId, 
-                                            String toolName, Object result) {
+    public MessageResponse handleToolResult(String sessionId, String toolCallId,
+                                            String toolName, Object result, Long authenticatedUserId) {
         ChatSession session = sessionRepository.findBySessionId(sessionId);
+        requireOwner(session, authenticatedUserId);
         if (session == null) {
             throw new RuntimeException("会话不存在");
         }
@@ -112,11 +114,12 @@ public class AgentApplicationService {
     /**
      * 获取会话历史
      */
-    public List<MessageResponse> getMessages(String sessionId) {
+    public List<MessageResponse> getMessages(String sessionId, Long authenticatedUserId) {
         ChatSession session = sessionRepository.findBySessionId(sessionId);
         if (session == null) {
             return new ArrayList<>();
         }
+        requireOwner(session, authenticatedUserId);
 
         return session.getMessages().stream()
                 .map(msg -> MessageResponse.builder()
@@ -130,8 +133,8 @@ public class AgentApplicationService {
     /**
      * 获取用户的所有会话
      */
-    public List<SessionResponse> getUserSessions(Long userId) {
-        return sessionRepository.findByUserId(userId).stream()
+    public List<SessionResponse> getUserSessions(Long authenticatedUserId) {
+        return sessionRepository.findByUserId(authenticatedUserId).stream()
                 .map(session -> SessionResponse.builder()
                         .sessionId(session.getSessionId())
                         .title(session.getTitle())
@@ -147,7 +150,17 @@ public class AgentApplicationService {
     /**
      * 删除会话
      */
-    public void deleteSession(String sessionId) {
+    public void deleteSession(String sessionId, Long authenticatedUserId) {
+        requireOwner(sessionRepository.findBySessionId(sessionId), authenticatedUserId);
         sessionRepository.deleteBySessionId(sessionId);
+    }
+
+    private void requireOwner(ChatSession session, Long authenticatedUserId) {
+        if (session == null) throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.NOT_FOUND, "会话不存在");
+        if (authenticatedUserId == null || !authenticatedUserId.equals(session.getUserId())) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.FORBIDDEN, "无权访问该会话");
+        }
     }
 }

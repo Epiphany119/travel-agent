@@ -8,6 +8,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
 
 import java.util.Map;
 import java.util.UUID;
@@ -39,9 +41,10 @@ public class A2aTaskController {
      * @return SSE流
      */
     @GetMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter createAndStream(@ModelAttribute TravelPlanRequest request) {
+    public SseEmitter createAndStream(@Valid @ModelAttribute TravelPlanRequest request, HttpServletRequest http) {
+        String ownerId = currentUserId(http);
         String taskId = UUID.randomUUID().toString();
-        taskStateStore.create(taskId);
+        taskStateStore.create(taskId, ownerId);
         log.info("创建新任务并开始SSE流: taskId={}, destination={}, days={}",
                 taskId, request.getDestination(), request.getDays());
 
@@ -59,17 +62,20 @@ public class A2aTaskController {
      * @return 任务状态
      */
     @GetMapping("/{taskId}/status")
-    public Map<String, Object> getTaskStatus(@PathVariable String taskId) {
+    public Map<String, Object> getTaskStatus(@PathVariable String taskId, HttpServletRequest http) {
         log.info("查询任务状态: taskId={}", taskId);
         var state = taskStateStore.get(taskId);
         if (state == null) return Map.of("taskId", taskId, "status", "NOT_FOUND");
+        requireOwner(state, currentUserId(http));
         return Map.of("taskId", state.taskId(), "status", state.status(), "progress", state.progress(),
                 "error", state.error() == null ? "" : state.error(), "updatedAt", state.updatedAt().toString());
     }
 
     @PostMapping("/{taskId}/cancel")
-    public Map<String, String> cancelTask(@PathVariable String taskId) {
-        if (taskStateStore.get(taskId) == null) return Map.of("taskId", taskId, "status", "NOT_FOUND");
+    public Map<String, String> cancelTask(@PathVariable String taskId, HttpServletRequest http) {
+        var state = taskStateStore.get(taskId);
+        if (state == null) return Map.of("taskId", taskId, "status", "NOT_FOUND");
+        requireOwner(state, currentUserId(http));
         taskStateStore.cancel(taskId); return Map.of("taskId", taskId, "status", "CANCELLED");
     }
 
@@ -82,9 +88,10 @@ public class A2aTaskController {
      * @return 任务ID
      */
     @PostMapping
-    public Map<String, String> createTask(@RequestBody TravelPlanRequest request) {
+    public Map<String, String> createTask(@Valid @RequestBody TravelPlanRequest request, HttpServletRequest http) {
+        String ownerId = currentUserId(http);
         String taskId = UUID.randomUUID().toString();
-        taskStateStore.create(taskId);
+        taskStateStore.create(taskId, ownerId);
         log.info("创建新任务: taskId={}, destination={}, days={}",
                 taskId, request.getDestination(), request.getDays());
 
@@ -106,9 +113,13 @@ public class A2aTaskController {
      */
     @GetMapping(value = "/{taskId}/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter streamTask(@PathVariable String taskId,
-                                  @RequestBody(required = false) TravelPlanRequest request) {
+                                  @RequestBody(required = false) TravelPlanRequest request,
+                                  HttpServletRequest http) {
         log.info("获取任务SSE流: taskId={}", taskId);
-        if (taskStateStore.get(taskId) == null) taskStateStore.create(taskId);
+        var state = taskStateStore.get(taskId);
+        if (state == null) throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.NOT_FOUND, "任务不存在");
+        requireOwner(state, currentUserId(http));
 
         if (request == null) {
             request = new TravelPlanRequest();
@@ -141,5 +152,21 @@ public class A2aTaskController {
             timeout = Duration.ofMinutes(5);
         }
         return new SseEmitter(timeout.toMillis());
+    }
+
+    private String currentUserId(HttpServletRequest request) {
+        Object value = request.getAttribute("authenticatedUserId");
+        if (value == null || value.toString().isBlank()) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.UNAUTHORIZED, "请先登录");
+        }
+        return value.toString();
+    }
+
+    private void requireOwner(com.travel.a2a.service.TaskStateStore.TaskState state, String ownerId) {
+        if (state.ownerId() == null || state.ownerId().isBlank() || !state.ownerId().equals(ownerId)) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.FORBIDDEN, "无权访问该任务");
+        }
     }
 }
