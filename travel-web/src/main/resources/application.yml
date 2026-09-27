@@ -81,6 +81,9 @@ travel:
     sandbox-enabled: ${TRAVEL_COMMERCE_SANDBOX_ENABLED:true}
   security:
     moderator-user-ids: ${TRAVEL_MODERATOR_USER_IDS:}
+  web:
+    cors:
+      allowed-origins: ${TRAVEL_CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
   # MCP Server 配置
   mcp:
     weather-url: ${WEATHER_MCP_URL:http://localhost:8081}
@@ -125,6 +128,9 @@ gaode:
 
 # A2A 编排分层超时
 a2a:
+  persistence:
+    # 本地无迁移时允许开发降级；生产 profile 必须 fail-closed。
+    fail-closed: ${A2A_PERSISTENCE_FAIL_CLOSED:false}
   runtime:
     tool-timeout: ${A2A_TOOL_TIMEOUT:10s}
     aggregate-timeout: ${A2A_AGGREGATE_TIMEOUT:30s}

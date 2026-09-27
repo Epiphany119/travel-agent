@@ -14,12 +14,17 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.springframework.beans.factory.annotation.Value;
+import java.util.Arrays;
 
 /**
  * A2A运行时配置类
  */
 @Configuration
 public class A2aRuntimeConfig implements WebMvcConfigurer {
+
+    @Value("${travel.web.cors.allowed-origins:http://localhost:5173,http://127.0.0.1:5173}")
+    private String allowedOrigins;
 
     /**
      * 配置ObjectMapper
@@ -62,7 +67,8 @@ public class A2aRuntimeConfig implements WebMvcConfigurer {
     @Override
     public void addCorsMappings(CorsRegistry registry) {
         registry.addMapping("/a2a/**")
-                .allowedOrigins("*")
+                .allowedOrigins(Arrays.stream(allowedOrigins.split(","))
+                        .map(String::trim).filter(value -> !value.isBlank()).toArray(String[]::new))
                 .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
                 .allowedHeaders("*")
                 .maxAge(3600);

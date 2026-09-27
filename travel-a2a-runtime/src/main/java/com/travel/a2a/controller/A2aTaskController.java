@@ -27,7 +27,6 @@ import java.util.concurrent.RejectedExecutionException;
 @RestController
 @RequestMapping("/a2a/tasks")
 @RequiredArgsConstructor
-@CrossOrigin(origins = "*")
 public class A2aTaskController {
 
     private final HostAgentService hostAgentService;

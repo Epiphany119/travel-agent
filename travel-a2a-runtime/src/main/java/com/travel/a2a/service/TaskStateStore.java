@@ -6,6 +6,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Value;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -23,6 +24,8 @@ public class TaskStateStore {
     private static final Duration TTL = Duration.ofHours(24);
     private final StringRedisTemplate redis;
     private final AiTaskRepository taskRepository;
+    @Value("${a2a.persistence.fail-closed:false}")
+    private boolean failClosed;
 
     /** 保留给原有单元测试和无数据库的轻量运行场景。 */
     public TaskStateStore(StringRedisTemplate redis) {
@@ -70,6 +73,9 @@ public class TaskStateStore {
                         // 继续走开发环境降级路径，并保留原始错误日志。
                     }
                 }
+                if (failClosed) {
+                    throw new IllegalStateException("AI 任务持久化不可用，拒绝启动未持久化任务", e);
+                }
                 log.error("AI 任务数据库写入失败，将暂时使用 Redis 镜像: taskId={}, cause={}",
                         taskId, e.getMostSpecificCause() == null ? e.getMessage() : e.getMostSpecificCause().getMessage());
             }
@@ -93,6 +99,7 @@ public class TaskStateStore {
                     return fromRecord(durable.get());
                 }
             } catch (DataAccessException e) {
+                if (failClosed) throw new IllegalStateException("AI 任务持久化不可用，无法读取任务", e);
                 log.warn("AI 任务数据库查询失败: taskId={}, cause={}", taskId, e.getMessage());
             }
         }
@@ -119,6 +126,7 @@ public class TaskStateStore {
                 taskRepository.updateState(id, status, progress, errorCode, errorMessage);
             } catch (DataAccessException e) {
                 log.error("AI 任务数据库状态更新失败: taskId={}, status={}", id, status, e);
+                if (failClosed) throw new IllegalStateException("AI 任务持久化不可用，无法更新任务", e);
             }
         }
         if (Boolean.TRUE.equals(redis.hasKey(key(id)))) {

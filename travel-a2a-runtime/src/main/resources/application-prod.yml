@@ -1,0 +1,3 @@
+a2a:
+  persistence:
+    fail-closed: ${A2A_PERSISTENCE_FAIL_CLOSED:true}

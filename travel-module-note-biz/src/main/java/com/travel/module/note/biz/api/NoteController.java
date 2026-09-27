@@ -26,7 +26,6 @@ import org.springframework.web.server.ResponseStatusException;
 @RestController
 @RequestMapping("/api/notes")
 @RequiredArgsConstructor
-@CrossOrigin(origins = "*")
 public class NoteController {
 
     private final NoteApplicationService noteService;
