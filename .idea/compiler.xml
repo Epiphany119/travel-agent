@@ -6,6 +6,7 @@
         <sourceOutputDir name="target/generated-sources/annotations" />
         <sourceTestOutputDir name="target/generated-test-sources/test-annotations" />
         <outputRelativeToContentRoot value="true" />
+        <module name="travel-module-commerce-biz" />
         <module name="travel-mcp-server-budget" />
         <module name="travel-module-itinerary-biz" />
         <module name="travel-mcp-server-weather" />
@@ -38,6 +39,7 @@
       <module name="travel-mcp-server-weather" options="-parameters" />
       <module name="travel-module-agent-biz" options="-parameters" />
       <module name="travel-module-auth-biz" options="-parameters" />
+      <module name="travel-module-commerce-biz" options="-parameters" />
       <module name="travel-module-itinerary-biz" options="-parameters" />
       <module name="travel-module-mcp-biz" options="-parameters" />
       <module name="travel-module-note-biz" options="-parameters" />
