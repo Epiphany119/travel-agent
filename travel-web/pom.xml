@@ -15,6 +15,10 @@
     <description>Web 启动模块 - 聚合所有业务模块</description>
 
     <dependencies>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
         <!-- 认证模块 -->
         <dependency>
             <groupId>com.travel</groupId>
@@ -43,6 +47,12 @@
         <dependency>
             <groupId>com.travel</groupId>
             <artifactId>travel-module-user-biz</artifactId>
+        </dependency>
+
+        <!-- 商业化模块：计划归因、联盟商品、订单和支付事件 -->
+        <dependency>
+            <groupId>com.travel</groupId>
+            <artifactId>travel-module-commerce-biz</artifactId>
         </dependency>
 
         <!-- 旅行笔记模块 -->

@@ -17,6 +17,10 @@ import java.util.List;
 @AllArgsConstructor
 public class TravelPlanResult {
 
+    /** 可恢复的计划标识，保存、生命周期和商业转化都通过它关联。 */
+    @JsonProperty("planId")
+    private String planId;
+
     @JsonProperty("destination")
     private String destination;
     @JsonProperty("days")

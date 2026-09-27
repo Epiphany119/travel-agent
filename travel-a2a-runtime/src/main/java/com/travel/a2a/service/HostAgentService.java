@@ -3,6 +3,7 @@ package com.travel.a2a.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.travel.a2a.model.*;
+import com.travel.a2a.persistence.AiPlanRepository;
 import com.travel.a2a.service.orchestrator.ItineraryOrchestrator;
 import com.travel.mcp.protocol.a2a.A2AStreamEvent;
 import lombok.RequiredArgsConstructor;
@@ -14,6 +15,8 @@ import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.openai.api.ResponseFormat;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataAccessException;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.stereotype.Service;
@@ -46,6 +49,10 @@ public class HostAgentService {
     private final ItineraryPlanValidator planValidator;
     private final LlmItineraryPlanParser planParser;
     private final TaskStateStore taskStateStore;
+    private final AiPlanRepository aiPlanRepository;
+
+    @Value("${spring.ai.openai.chat.options.model:unknown}")
+    private String configuredModel;
 
     /**
      * 执行行程规划并通过SSE流输出
@@ -73,9 +80,38 @@ public class HostAgentService {
     }
 
     /**
+     * SSE 重连时重放已经落库的结果，避免客户端刷新后再次调用模型。
+     */
+    public void replay(String taskId, SseEmitter emitter) {
+        try {
+            TaskStateStore.TaskState state = taskStateStore.get(taskId);
+            if (state == null || state.planId() == null || state.ownerId() == null) {
+                emitter.complete();
+                return;
+            }
+            Map<String, Object> version = aiPlanRepository.getVersion(state.planId(), 1, state.ownerId());
+            if (version == null || version.get("output_json") == null) {
+                emitter.complete();
+                return;
+            }
+            TravelPlanResult result = objectMapper.readValue(String.valueOf(version.get("output_json")), TravelPlanResult.class);
+            if (result.getFinalPlan() != null && !result.getFinalPlan().isBlank()) {
+                sendEvent(emitter, "token", A2AStreamEvent.token(result.getFinalPlan()));
+            }
+            sendEvent(emitter, "task_done", A2AStreamEvent.taskDone(result));
+        } catch (Exception e) {
+            log.warn("重放已完成 AI 任务失败: taskId={}, causeType={}", taskId, e.getClass().getSimpleName());
+            sendError(emitter, "任务结果暂时无法读取，请稍后重试");
+        } finally {
+            emitter.complete();
+        }
+    }
+
+    /**
      * 执行行程规划
      */
     private void executePlan(TravelPlanRequest request, String taskId, SseEmitter emitter) {
+        long startedAt = System.currentTimeMillis();
         try {
             // 1. 发送任务开始事件
             sendEvent(emitter, "task_update", A2AStreamEvent.taskUpdate(
@@ -156,8 +192,19 @@ public class HostAgentService {
                 sendEvent(emitter, "token", A2AStreamEvent.token(resultJson));
             }
 
-            // 7. 发送完成事件
+            // 7. 先持久化不可变计划版本，再发送完成事件。
             result.setFinalPlan(finalPlan);
+            TaskStateStore.TaskState state = taskStateStore.get(taskId);
+            String ownerId = state == null || state.ownerId() == null || state.ownerId().isBlank()
+                    ? "system" : state.ownerId();
+            try {
+                aiPlanRepository.saveCompleted(ownerId, taskId, request, result,
+                        System.currentTimeMillis() - startedAt, "zhipu", configuredModel, "travel-plan-v1");
+            } catch (DataAccessException e) {
+                // 未执行迁移时保留开发环境降级，但生产应将此类错误作为发布阻断项。
+                log.error("AI 计划持久化失败，任务仅保留实时结果: taskId={}", taskId, e);
+                result.setPlanId("volatile_" + taskId.replace("-", ""));
+            }
             sendEvent(emitter, "task_done", A2AStreamEvent.taskDone(result));
             taskStateStore.succeed(taskId);
 

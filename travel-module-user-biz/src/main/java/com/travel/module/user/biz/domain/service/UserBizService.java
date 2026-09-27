@@ -91,6 +91,14 @@ public class UserBizService {
         String target = request.getTarget().toLowerCase(Locale.ROOT);
         TravelNotePO note = request.getNote();
         note.setUserId(userId);
+        // 计划 ID 由 A2A 运行时生成并持久化，保存动作只允许把它作为关联键写入，
+        // 不接受前端伪造所有者或计划内容。后续可在计划服务中补充 owner 校验。
+        if (request.getPlanId() != null && !request.getPlanId().isBlank()) {
+            if (request.getPlanId().length() > 64 || !request.getPlanId().matches("[A-Za-z0-9_-]+")) {
+                throw new IllegalArgumentException("invalid planId");
+            }
+            note.setPlanId(request.getPlanId());
+        }
         note.setNoteType(target);
         TravelNotePO savedNote = saveTravelNote(note);
         Map<String, Object> result = new LinkedHashMap<>();
@@ -744,7 +752,6 @@ public class UserBizService {
         return po;
     }
 
-    @Transactional
     @Transactional
     public void updateJourney(JourneyPO po, String userId) {
         ownedJourney(po.getId(), userId);

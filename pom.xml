@@ -20,6 +20,7 @@
 
         <!-- 业务模块（按依赖顺序） -->
         <module>travel-module-user-biz</module>
+        <module>travel-module-commerce-biz</module>
         <module>travel-module-auth-biz</module>
         <module>travel-module-agent-biz</module>
         <module>travel-module-itinerary-biz</module>
@@ -124,6 +125,11 @@
             <dependency>
                 <groupId>com.travel</groupId>
                 <artifactId>travel-module-user-biz</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.travel</groupId>
+                <artifactId>travel-module-commerce-biz</artifactId>
                 <version>${project.version}</version>
             </dependency>
 

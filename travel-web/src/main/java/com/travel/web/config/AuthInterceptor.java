@@ -18,6 +18,7 @@ public class AuthInterceptor implements HandlerInterceptor {
         String path = req.getRequestURI();
         boolean privatePath = path.startsWith(req.getContextPath() + "/api/notes")
                 || path.startsWith(req.getContextPath() + "/api/agent")
+                || path.startsWith(req.getContextPath() + "/api/commerce")
                 || path.startsWith(req.getContextPath() + "/a2a/")
                 || path.matches(".*/api/user/(preferences|nickname|avatar|reputation|social/.*|journeys|inspirations|travel-notes|ai-plans|users/[^/]+/friend-request|upload).*");
         boolean publicPath = path.contains("/share/")

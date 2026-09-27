@@ -13,6 +13,8 @@ import java.util.List;
 @Data
 @NoArgsConstructor
 public class SaveAiPlanRequest {
+    /** A2A 生成结果中的计划标识，用于把用户保存动作关联回 AI 任务版本。 */
+    private String planId;
     private String target;
     private TravelNotePO note;
     private InspirationPO inspiration;

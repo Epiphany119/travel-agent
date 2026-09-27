@@ -3,6 +3,7 @@ import { ref, computed, watch, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { getCurrentUserId, saveAiPlan } from '@/api/user'
+import { createCommerceOrder, listCommerceOffers, payCommerceOrder, recordCommerceClick, type CommerceOffer } from '@/api/commerce'
 import { renderMarkdown as renderSafeMarkdown } from '@/utils/markdown'
 import { subscribeA2AStream, fetchPoiImages, type TravelPlan } from '@/api/agent'
 import { useStreamStore } from '@/stores/stream'
@@ -81,6 +82,23 @@ const hasUnknownPlanCost = computed(() => structuredDays.value.flat()
 const confirmedPlanCost = computed(() => hasPlanActivities.value && !hasUnknownPlanCost.value
   ? totalPlanCost.value : null)
 const scheduling = ref(false)
+const commerceOffers = ref<CommerceOffer[]>([])
+const commerceLoading = ref(false)
+async function loadCommerceOffers(planId: string) {
+  commerceLoading.value = true
+  try { commerceOffers.value = await listCommerceOffers(planId, destination.value) } catch { commerceOffers.value = [] }
+  finally { commerceLoading.value = false }
+}
+async function buyCommerceOffer(offer: CommerceOffer) {
+  const planId = travelPlan.value?.planId
+  if (!planId) return
+  try {
+    await recordCommerceClick(planId, offer.offer_id)
+    const order = await createCommerceOrder(planId, offer.offer_id)
+    await payCommerceOrder(order.order_no)
+    ElMessage.success('沙箱订单已支付，权益已写入账户')
+  } catch { ElMessage.error('订单暂时无法完成，请稍后重试') }
+}
 async function addToSchedule(target: 'inspiration' | 'journey') {
   if (scheduling.value) return
   scheduling.value = true
@@ -112,6 +130,7 @@ async function addToSchedule(target: 'inspiration' | 'journey') {
     })
     const firstImage = structuredDays.value.flat().find((a: any) => a.image || a.imageUrl)?.image || structuredDays.value.flat().find((a: any) => a.imageUrl)?.imageUrl || ''
     await saveAiPlan({
+      planId: result.planId || travelPlan.value?.planId || undefined,
       target,
       note: { userId: currentUserId, title: `${result.destination || destination.value} · ${days.value}日旅行计划`, destination: result.destination || destination.value, noteType: target, sourceType: 'agent', totalDays: days.value, travelers: travelers.value, budget: budget.value, contentJson: JSON.stringify(noteContent), status: target === 'journey' ? 'planned' : 'draft' },
       inspiration: target === 'inspiration' ? { userId: currentUserId, name: result.destination || destination.value, imageUrl: firstImage, description: planMarkdown || 'Roamly 为你生成的旅行方案', quote: preferenceSummary.value, tags: 'AI规划,旅行计划', estimatedBudget: confirmedPlanCost.value, status: 0 } : undefined,
@@ -365,7 +384,7 @@ async function generateStream() {
           })))
 
           travelPlan.value = {
-            planId: result.success ? 'plan_' + Date.now() : '',
+            planId: result.planId || '',
             destination: destination.value,
             days: days.value,
             totalBudget: result.budget?.totalBudget || budget.value,
@@ -376,6 +395,7 @@ async function generateStream() {
             packingList: [],
             dayPlans: detailDayPlans
           }
+          if (result.planId) void loadCommerceOffers(result.planId)
 
           // 按"第1天/第2天/..."拆分 overview，分别塞入各 Tab
           const overview = String(result.finalPlan || result.overview || streamStore.fullText || '').trim() || fallbackPlanText(backendDays)
@@ -566,6 +586,15 @@ function getMealType(time: string): string {
             <button class="schedule-btn schedule-btn--ghost" :disabled="scheduling" @click="addToSchedule('journey')">＋ 保存为我的旅程</button>
           </div>
         </div>
+        <div v-if="commerceOffers.length" class="commerce-offers">
+          <div class="commerce-offers__head"><span>为本次计划匹配的服务</span><small>{{ commerceLoading ? '加载中…' : '沙箱链路可验收' }}</small></div>
+          <div class="commerce-offers__list">
+            <button v-for="offer in commerceOffers" :key="offer.offer_id" class="commerce-offer" @click="buyCommerceOffer(offer)">
+              <span><b>{{ offer.title }}</b><small>{{ offer.provider_code }} · {{ offer.offer_type }}</small></span>
+              <strong>{{ offer.currency }} {{ offer.price }}</strong>
+            </button>
+          </div>
+        </div>
         <div class="decision-panel">
           <div><span class="decision-kicker">AI 旅行策略</span><strong>{{ travelStyle }} × {{ interests.length ? interests.join(' · ') : '综合体验' }}</strong></div>
           <p>每天安排 2–4 个核心地点，优先按区域串联；你可以直接按时间轴出发，也可以替换任意一个地点。</p>
@@ -722,6 +751,16 @@ function getMealType(time: string): string {
   letter-spacing: 0.18em;
   margin: 0 0 10px;
 }
+
+.commerce-offers { margin: 14px 0 18px; padding: 14px; border: 1px solid rgba(31, 54, 45, .12); border-radius: 16px; background: rgba(255,255,255,.72); }
+.commerce-offers__head { display:flex; justify-content:space-between; gap:12px; align-items:center; margin-bottom:10px; color:var(--ink); font-weight:700; }
+.commerce-offers__head small { color:var(--muted); font-weight:500; }
+.commerce-offers__list { display:grid; gap:8px; }
+.commerce-offer { display:flex; justify-content:space-between; align-items:center; gap:14px; width:100%; padding:12px 14px; border:1px solid rgba(31,54,45,.1); border-radius:12px; background:#fff; color:var(--ink); text-align:left; cursor:pointer; }
+.commerce-offer:hover { border-color:var(--sunset); transform:translateY(-1px); }
+.commerce-offer span { display:grid; gap:3px; }
+.commerce-offer small { color:var(--muted); font-weight:500; }
+.commerce-offer strong { color:var(--sunset); white-space:nowrap; }
 
 .hero h1 {
   font: 54px/1.08 "DM Serif Display", "Noto Sans SC";

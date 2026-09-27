@@ -1,5 +1,7 @@
 package com.travel.a2a.controller;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.travel.a2a.config.A2aRuntimeProperties;
 import com.travel.a2a.model.TravelPlanRequest;
 import com.travel.a2a.service.HostAgentService;
@@ -31,6 +33,7 @@ public class A2aTaskController {
     private final HostAgentService hostAgentService;
     private final A2aRuntimeProperties runtimeProperties;
     private final com.travel.a2a.service.TaskStateStore taskStateStore;
+    private final ObjectMapper objectMapper;
 
     /**
      * 创建新任务并开始执行
@@ -44,7 +47,7 @@ public class A2aTaskController {
     public SseEmitter createAndStream(@Valid @ModelAttribute TravelPlanRequest request, HttpServletRequest http) {
         String ownerId = currentUserId(http);
         String taskId = UUID.randomUUID().toString();
-        taskStateStore.create(taskId, ownerId);
+        taskStateStore.createOrGet(taskId, ownerId, "default", null, requestJson(request));
         log.info("创建新任务并开始SSE流: taskId={}, destination={}, days={}",
                 taskId, request.getDestination(), request.getDays());
 
@@ -67,8 +70,14 @@ public class A2aTaskController {
         var state = taskStateStore.get(taskId);
         if (state == null) return Map.of("taskId", taskId, "status", "NOT_FOUND");
         requireOwner(state, currentUserId(http));
-        return Map.of("taskId", state.taskId(), "status", state.status(), "progress", state.progress(),
-                "error", state.error() == null ? "" : state.error(), "updatedAt", state.updatedAt().toString());
+        Map<String, Object> response = new java.util.LinkedHashMap<>();
+        response.put("taskId", state.taskId());
+        response.put("status", state.status());
+        response.put("progress", state.progress());
+        response.put("error", state.error() == null ? "" : state.error());
+        response.put("updatedAt", state.updatedAt().toString());
+        if (state.planId() != null) response.put("planId", state.planId());
+        return response;
     }
 
     @PostMapping("/{taskId}/cancel")
@@ -88,10 +97,16 @@ public class A2aTaskController {
      * @return 任务ID
      */
     @PostMapping
-    public Map<String, String> createTask(@Valid @RequestBody TravelPlanRequest request, HttpServletRequest http) {
+    public Map<String, String> createTask(@Valid @RequestBody TravelPlanRequest request,
+                                          @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+                                          HttpServletRequest http) {
         String ownerId = currentUserId(http);
         String taskId = UUID.randomUUID().toString();
-        taskStateStore.create(taskId, ownerId);
+        var creation = taskStateStore.createOrGet(taskId, ownerId, "default", idempotencyKey, requestJson(request));
+        if (!creation.created()) {
+            var existing = taskStateStore.get(creation.taskId());
+            return Map.of("taskId", creation.taskId(), "status", existing == null ? "existing" : existing.status().toLowerCase());
+        }
         log.info("创建新任务: taskId={}, destination={}, days={}",
                 taskId, request.getDestination(), request.getDays());
 
@@ -131,6 +146,11 @@ public class A2aTaskController {
         }
 
         SseEmitter emitter = newEmitter();
+        var current = taskStateStore.get(taskId);
+        if (current != null && ("SUCCEEDED".equals(current.status()) || "FAILED".equals(current.status()) || "CANCELLED".equals(current.status()))) {
+            hostAgentService.replay(taskId, emitter);
+            return emitter;
+        }
         startPlan(request, taskId, emitter);
         return emitter;
     }
@@ -167,6 +187,14 @@ public class A2aTaskController {
         if (state.ownerId() == null || state.ownerId().isBlank() || !state.ownerId().equals(ownerId)) {
             throw new org.springframework.web.server.ResponseStatusException(
                     org.springframework.http.HttpStatus.FORBIDDEN, "无权访问该任务");
+        }
+    }
+
+    private String requestJson(TravelPlanRequest request) {
+        try {
+            return objectMapper.writeValueAsString(request);
+        } catch (JsonProcessingException e) {
+            throw new IllegalArgumentException("无法保存任务请求", e);
         }
     }
 }

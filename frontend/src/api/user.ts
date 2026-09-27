@@ -67,6 +67,7 @@ export function deleteJourney(id: number) {
 export interface TravelNote {
   id?: number; userId?: string; title: string; destination: string
   noteType?: 'inspiration'|'journey'; sourceType?: string; sourceId?: number
+  planId?: string
   templateVersion?: number; status?: string; visibility?: 'private'|'link'
   shareToken?: string; coverUrl?: string; startDate?: string; endDate?: string
   totalDays?: number; travelers?: number; budget?: number | null; contentJson: string
@@ -75,6 +76,7 @@ export function listTravelNotes() { return request.get<unknown, ApiResult<Travel
 export function getTravelNote(id: number) { return request.get<unknown, ApiResult<TravelNote>>('/user/travel-notes/' + id) }
 export function saveTravelNote(data: TravelNote) { return request.post<unknown, ApiResult<TravelNote>>('/user/travel-notes', data) }
 export interface SaveAiPlanRequest {
+  planId?: string
   target: 'inspiration' | 'journey'
   note: TravelNote
   inspiration?: Inspiration

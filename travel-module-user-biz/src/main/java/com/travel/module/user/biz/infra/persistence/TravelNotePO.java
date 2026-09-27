@@ -17,6 +17,8 @@ public class TravelNotePO {
     private String noteType;
     private String sourceType;
     private Long sourceId;
+    /** 由 A2A 运行时创建的可恢复计划标识。 */
+    private String planId;
     private Integer templateVersion;
     private String status;
     private String visibility;

@@ -76,6 +76,9 @@ mybatis-plus:
 
   # 旅行规划 Agent 配置
 travel:
+  commerce:
+    # 本地验收用沙箱支付；生产切换到真实支付适配器并关闭此开关。
+    sandbox-enabled: ${TRAVEL_COMMERCE_SANDBOX_ENABLED:true}
   security:
     moderator-user-ids: ${TRAVEL_MODERATOR_USER_IDS:}
   # MCP Server 配置
@@ -133,3 +136,14 @@ logging:
     com.travel: INFO
     # 开启邮件发送调试日志，排查问题时使用
     org.springframework.mail: WARN
+
+# 生产监控入口只建议通过内网网关访问。
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
