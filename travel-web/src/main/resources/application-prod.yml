@@ -1,0 +1,10 @@
+travel:
+  commerce:
+    sandbox-enabled: ${TRAVEL_COMMERCE_SANDBOX_ENABLED:false}
+  web:
+    cors:
+      allowed-origins: ${TRAVEL_CORS_ALLOWED_ORIGINS}
+
+a2a:
+  persistence:
+    fail-closed: ${A2A_PERSISTENCE_FAIL_CLOSED:true}

@@ -38,7 +38,7 @@ public class TravelPlanningService {
      * @return 生成的行程
      */
     public String generateItinerary(String userRequest) {
-        log.info("开始生成行程，用户请求: {}", userRequest);
+        log.info("开始生成兼容接口行程，用户请求长度: {}", userRequest == null ? 0 : userRequest.length());
 
         String systemPrompt =
                 "你是一个专业的旅行规划助手，擅长根据用户需求和实时数据生成个性化的旅行行程。\n\n" +

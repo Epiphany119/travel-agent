@@ -7,6 +7,9 @@ import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
+import org.springframework.beans.factory.annotation.Value;
+
+import java.util.Arrays;
 
 /**
  * Web MVC 配置 - 静态资源处理和CORS
@@ -14,6 +17,8 @@ import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 @Configuration
 public class WebMvcConfig implements WebMvcConfigurer {
     private final TokenService tokenService;
+    @Value("${travel.web.cors.allowed-origins:http://localhost:5173,http://127.0.0.1:5173}")
+    private String allowedOrigins;
     public WebMvcConfig(TokenService tokenService) { this.tokenService = tokenService; }
     @Override public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(new AuthInterceptor(tokenService));
@@ -22,7 +27,8 @@ public class WebMvcConfig implements WebMvcConfigurer {
     @Override
     public void addCorsMappings(CorsRegistry registry) {
         registry.addMapping("/**")
-                .allowedOrigins("*")
+                .allowedOrigins(Arrays.stream(allowedOrigins.split(","))
+                        .map(String::trim).filter(value -> !value.isBlank()).toArray(String[]::new))
                 .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
                 .allowedHeaders("*")
                 .maxAge(3600);

@@ -10,6 +10,8 @@
 - [部署说明](doc/DEPLOYMENT.md)：本地与容器化部署参考。
 - [扩展 API 示例](API.md)：更完整的请求示例；若与当前合约冲突，以源码和 `doc/API-CURRENT.md` 为准。
 - [前端说明](frontend/README.md)：页面路由、Vite 代理和编辑器数据边界。
+- [测试收尾报告](doc/TEST_REPORT.md)：2026-09-27 后端测试、前端构建、迁移验证和剩余验收门禁。
+- [双层 Loop 架构 PRD](doc/DUAL_LOOP_AI_APPLICATION_PRD.md)：内层旅行规划业务闭环、外层回归控制面、质量门禁、修复、灰度和回滚设计。
 
 ## 项目结构
 
@@ -90,6 +92,9 @@ mvn test
 # 前端类型检查和生产构建
 npm --prefix frontend ci
 npm --prefix frontend run build
+
+# 后端回归、前端构建并生成带 Git 基线的验收证据
+./scripts/acceptance-loop.sh
 ```
 
 登录后重点回归 `/explore`、`/chat`、`/notes`、`/profile` 与 `/users/search`。SSE 规划需同时验证增量文字、外部数据告警、取消和重试状态。

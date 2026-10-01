@@ -30,9 +30,15 @@ public class TravelAgentController {
         if (userRequest == null || userRequest.isBlank()) {
             return Map.of("success", false, "message", "请求内容不能为空");
         }
+        userRequest = userRequest.trim();
+        if (userRequest.length() > 4000) {
+            return Map.of("success", false, "message", "请求内容不能超过 4000 个字符");
+        }
 
         String result = travelPlanningService.generateItinerary(userRequest);
-        return Map.of("success", true, "data", result);
+        return Map.of("success", true, "verified", false,
+                "dataWarning", "此兼容接口返回模型文本，未接入结构化计划校验；请使用 /a2a/tasks 或 /api/travel-plans/generate 获取可验证计划",
+                "data", result);
     }
 
     /**

@@ -104,10 +104,13 @@ public class QuestionnaireService {
 
     @Transactional
     public ObjectNode startSession(String userId) {
+        if (userId == null || userId.isBlank()) {
+            throw new IllegalArgumentException("authenticated user is required");
+        }
         String sessionId = UUID.randomUUID().toString().replace("-", "").substring(0, 24);
         AgentQuestionnairePO po = new AgentQuestionnairePO();
         po.setSessionId(sessionId);
-        po.setUserId(userId == null || userId.isBlank() ? "user_001" : userId);
+        po.setUserId(userId);
         po.setCurrentStep(0);
         po.setAnswers("{}");
         po.setDataCache("{}");

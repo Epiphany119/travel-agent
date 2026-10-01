@@ -25,6 +25,8 @@ travel:
 
 # A2A Runtime specific settings
 a2a:
+  persistence:
+    fail-closed: ${A2A_PERSISTENCE_FAIL_CLOSED:false}
   runtime:
     tool-timeout: ${A2A_TOOL_TIMEOUT:10s}
     aggregate-timeout: ${A2A_AGGREGATE_TIMEOUT:30s}

@@ -16,7 +16,6 @@ import jakarta.servlet.http.HttpServletRequest;
 @RestController
 @RequestMapping("/api/agent")
 @RequiredArgsConstructor
-@CrossOrigin(origins = "*")
 public class AgentApi {
 
     private final AgentApplicationService agentService;
