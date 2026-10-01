@@ -36,6 +36,7 @@ public class UserBizService {
     private final TravelNoteMapper travelNoteMapper;
     private final ImageStorageService imageStorageService;
     private final JdbcTemplate jdbcTemplate;
+    private final AiPlanOwnershipGuard aiPlanOwnershipGuard;
 
     private final RestTemplate restTemplate = HttpClientSupport.newRestTemplate();
 
@@ -97,6 +98,7 @@ public class UserBizService {
             if (request.getPlanId().length() > 64 || !request.getPlanId().matches("[A-Za-z0-9_-]+")) {
                 throw new IllegalArgumentException("invalid planId");
             }
+            aiPlanOwnershipGuard.requireOwned(request.getPlanId(), userId);
             note.setPlanId(request.getPlanId());
         }
         note.setNoteType(target);

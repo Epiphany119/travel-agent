@@ -49,6 +49,15 @@ public class AiTaskRepository {
                 taskId, ownerId, valueOrDefault(tenantId, "default"), blankToNull(idempotencyKey), requestJson);
     }
 
+    /** Compare-and-set prevents duplicate workers when the same idempotency key is retried. */
+    public boolean claimExecution(String taskId) {
+        return jdbcTemplate.update(
+                "UPDATE ai_task SET status='RUNNING',progress=5,attempt=attempt+1," +
+                        "started_at=COALESCE(started_at,CURRENT_TIMESTAMP),updated_at=CURRENT_TIMESTAMP " +
+                        "WHERE task_id=? AND status='PENDING'",
+                taskId) == 1;
+    }
+
     public void updateState(String taskId, String status, int progress, String errorCode, String errorMessage) {
         if ("RUNNING".equals(status)) {
             jdbcTemplate.update(

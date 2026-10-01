@@ -35,6 +35,11 @@
             <artifactId>spring-jdbc</artifactId>
         </dependency>
 
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-core</artifactId>
+        </dependency>
+
         <!-- Spring AI OpenAI -->
         <dependency>
             <groupId>org.springframework.ai</groupId>

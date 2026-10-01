@@ -42,6 +42,19 @@ public class AsyncConfig {
     /**
      * 问卷 SSE 专用有界执行器，避免每个请求创建线程并在高并发下无限扩张。
      */
+    /** Bounded executor for replaying short-lived task events to SSE clients. */
+    @Bean(name = "sseStreamExecutor")
+    public Executor sseStreamExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(2);
+        executor.setMaxPoolSize(8);
+        executor.setQueueCapacity(100);
+        executor.setThreadNamePrefix("A2A-SSE-");
+        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
+        executor.initialize();
+        return executor;
+    }
+
     @Bean(name = "questionnaireExecutor", destroyMethod = "shutdown")
     public ExecutorService questionnaireExecutor() {
         AtomicInteger sequence = new AtomicInteger();

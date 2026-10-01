@@ -15,7 +15,7 @@ class TaskStateStoreTest {
         when(redis.opsForHash()).thenReturn(hash);
         when(hash.putIfAbsent(anyString(), eq("status"), eq("PENDING"))).thenReturn(true);
         when(redis.hasKey(anyString())).thenReturn(true);
-        when(hash.get(anyString(), eq("status"))).thenReturn("SUCCEEDED");
+        when(hash.entries(anyString())).thenReturn(Map.of("status", "SUCCEEDED", "progress", "100", "updatedAt", "2026-09-18T10:00:00Z"));
         TaskStateStore store = new TaskStateStore(redis);
         assertTrue(store.create("t-1"));
         store.running("t-1", 20);

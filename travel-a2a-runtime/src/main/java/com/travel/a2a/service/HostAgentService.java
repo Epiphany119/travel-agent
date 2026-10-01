@@ -8,6 +8,7 @@ import com.travel.a2a.service.orchestrator.ItineraryOrchestrator;
 import com.travel.mcp.protocol.a2a.A2AStreamEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
@@ -20,9 +21,9 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.stereotype.Service;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.io.IOException;
+
+
 import java.net.ConnectException;
 import java.net.SocketTimeoutException;
 import java.math.BigDecimal;
@@ -50,6 +51,8 @@ public class HostAgentService {
     private final LlmItineraryPlanParser planParser;
     private final TaskStateStore taskStateStore;
     private final AiPlanRepository aiPlanRepository;
+    private final TaskEventStore taskEventStore;
+    private final AiPlanningMetrics aiPlanningMetrics;
 
     @Value("${spring.ai.openai.chat.options.model:unknown}")
     private String configuredModel;
@@ -61,78 +64,71 @@ public class HostAgentService {
      * @param taskId  任务ID
      * @return SseEmitter
      */
-    @Async("taskExecutor")
-    public void plan(TravelPlanRequest request, String taskId, SseEmitter emitter) {
-        taskStateStore.running(taskId, 5);
-        // 设置完成和超时回调
-        emitter.onCompletion(() -> log.info("SSE流完成: taskId={}", taskId));
-        emitter.onTimeout(() -> log.warn("SSE流超时: taskId={}", taskId));
-        emitter.onError(e -> log.error("SSE流异常: taskId={}", taskId, e));
 
+    /** Runs the plan independently of any SSE connection; events are retained for reconnects. */
+    @Async("taskExecutor")
+    public void plan(TravelPlanRequest request, String taskId, String traceId) {
+        String previousTraceId = MDC.get("traceId");
+        if (traceId != null && !traceId.isBlank()) MDC.put("traceId", traceId);
+        long startedAt = System.currentTimeMillis();
         try {
-            executePlan(request, taskId, emitter);
+            executePlan(request, taskId);
         } catch (Exception e) {
             log.error("执行行程规划异常: taskId={}", taskId, e);
-            sendError(emitter, e.getMessage());
+            taskStateStore.fail(taskId, e.getMessage());
+            sendError(taskId, e.getMessage());
+            aiPlanningMetrics.recordPlanOutcome(configuredModel, "failed",
+                    System.currentTimeMillis() - startedAt);
         } finally {
-            emitter.complete();
+            if (previousTraceId == null) MDC.remove("traceId");
+            else MDC.put("traceId", previousTraceId);
         }
     }
 
-    /**
-     * SSE 重连时重放已经落库的结果，避免客户端刷新后再次调用模型。
-     */
-    public void replay(String taskId, SseEmitter emitter) {
+    /** Rebuilds terminal SSE events from the durable plan version after the Redis event TTL expires. */
+    public void replayCompleted(String taskId) {
         try {
             TaskStateStore.TaskState state = taskStateStore.get(taskId);
-            if (state == null || state.planId() == null || state.ownerId() == null) {
-                emitter.complete();
-                return;
-            }
+            if (state == null || state.planId() == null || state.ownerId() == null) return;
             Map<String, Object> version = aiPlanRepository.getVersion(state.planId(), 1, state.ownerId());
-            if (version == null || version.get("output_json") == null) {
-                emitter.complete();
-                return;
-            }
-            TravelPlanResult result = objectMapper.readValue(String.valueOf(version.get("output_json")), TravelPlanResult.class);
+            if (version == null || version.get("output_json") == null) return;
+            TravelPlanResult result = objectMapper.readValue(
+                    String.valueOf(version.get("output_json")), TravelPlanResult.class);
             if (result.getFinalPlan() != null && !result.getFinalPlan().isBlank()) {
-                sendEvent(emitter, "token", A2AStreamEvent.token(result.getFinalPlan()));
+                sendEvent(taskId, "token", A2AStreamEvent.token(result.getFinalPlan()));
             }
-            sendEvent(emitter, "task_done", A2AStreamEvent.taskDone(result));
+            sendEvent(taskId, "task_done", A2AStreamEvent.taskDone(result));
         } catch (Exception e) {
-            log.warn("重放已完成 AI 任务失败: taskId={}, causeType={}", taskId, e.getClass().getSimpleName());
-            sendError(emitter, "任务结果暂时无法读取，请稍后重试");
-        } finally {
-            emitter.complete();
+            log.warn("从已保存计划重建 SSE 结果失败: taskId={}, causeType={}",
+                    taskId, e.getClass().getSimpleName());
+            sendError(taskId, "任务结果暂时无法读取，请稍后重试");
         }
     }
 
-    /**
-     * 执行行程规划
-     */
-    private void executePlan(TravelPlanRequest request, String taskId, SseEmitter emitter) {
+    private void executePlan(TravelPlanRequest request, String taskId) {
         long startedAt = System.currentTimeMillis();
         try {
             // 1. 发送任务开始事件
-            sendEvent(emitter, "task_update", A2AStreamEvent.taskUpdate(
+            sendEvent(taskId, "task_update", A2AStreamEvent.taskUpdate(
                     java.util.Map.of("taskId", taskId, "status", "started",
                             "message", "开始规划行程...")));
 
             // 2. 发送工具调用事件（并行调用前）
-            sendEvent(emitter, "tool_call", A2AStreamEvent.toolCall(
+            sendEvent(taskId, "tool_call", A2AStreamEvent.toolCall(
                     java.util.Map.of("source", "weather", "action", "获取天气信息")));
 
-            sendEvent(emitter, "tool_call", A2AStreamEvent.toolCall(
+            sendEvent(taskId, "tool_call", A2AStreamEvent.toolCall(
                     java.util.Map.of("source", "poi", "action", "搜索景点")));
 
-            sendEvent(emitter, "tool_call", A2AStreamEvent.toolCall(
+            sendEvent(taskId, "tool_call", A2AStreamEvent.toolCall(
                     java.util.Map.of("source", "meal", "action", "搜索餐厅")));
 
-            sendEvent(emitter, "tool_call", A2AStreamEvent.toolCall(
+            sendEvent(taskId, "tool_call", A2AStreamEvent.toolCall(
                     java.util.Map.of("source", "budget", "action", "估算预算")));
 
             if (taskStateStore.get(taskId) != null && "CANCELLED".equals(taskStateStore.get(taskId).status())) {
-                emitter.complete();
+                aiPlanningMetrics.recordPlanOutcome(configuredModel, "cancelled",
+                        System.currentTimeMillis() - startedAt);
                 return;
             }
 
@@ -143,7 +139,7 @@ public class HostAgentService {
             // 4. 发送工具结果事件
             if (result.getDataWarnings() != null) {
                 for (DataWarning warning : result.getDataWarnings()) {
-                    sendEvent(emitter, "tool_result", A2AStreamEvent.toolResult(
+                    sendEvent(taskId, "tool_result", A2AStreamEvent.toolResult(
                             java.util.Map.of("source", warning.getSource(),
                                     "type", "warning",
                                     "message", warning.getMessage(),
@@ -153,26 +149,26 @@ public class HostAgentService {
 
             // 发送成功的结果
             if (result.getWeather() != null && result.getWeather().isSuccess()) {
-                sendEvent(emitter, "tool_result", A2AStreamEvent.toolResult(
+                sendEvent(taskId, "tool_result", A2AStreamEvent.toolResult(
                         java.util.Map.of("source", "weather", "type", "success")));
             }
             if (result.getPois() != null && !result.getPois().isEmpty()) {
-                sendEvent(emitter, "tool_result", A2AStreamEvent.toolResult(
+                sendEvent(taskId, "tool_result", A2AStreamEvent.toolResult(
                         java.util.Map.of("source", "poi", "type", "success",
                                 "count", result.getPois().size())));
             }
             if (result.getMeals() != null && !result.getMeals().isEmpty()) {
-                sendEvent(emitter, "tool_result", A2AStreamEvent.toolResult(
+                sendEvent(taskId, "tool_result", A2AStreamEvent.toolResult(
                         java.util.Map.of("source", "meal", "type", "success",
                                 "count", result.getMeals().size())));
             }
             if (result.getBudget() != null && result.getBudget().isSuccess()) {
-                sendEvent(emitter, "tool_result", A2AStreamEvent.toolResult(
+                sendEvent(taskId, "tool_result", A2AStreamEvent.toolResult(
                         java.util.Map.of("source", "budget", "type", "success")));
             }
 
             // 5. 发送LLM优化中的token
-            sendEvent(emitter, "task_update", A2AStreamEvent.taskUpdate(
+            sendEvent(taskId, "task_update", A2AStreamEvent.taskUpdate(
                     java.util.Map.of("taskId", taskId, "status", "optimizing",
                             "message", "LLM优化行程中...")));
 
@@ -185,11 +181,11 @@ public class HostAgentService {
 
             // 分段发送最终行程
             if (finalPlan != null && !finalPlan.isEmpty()) {
-                sendEvent(emitter, "token", A2AStreamEvent.token(finalPlan));
+                sendEvent(taskId, "token", A2AStreamEvent.token(finalPlan));
             } else {
                 // 如果LLM优化失败，发送原始行程数据
                 String resultJson = objectMapper.writeValueAsString(result);
-                sendEvent(emitter, "token", A2AStreamEvent.token(resultJson));
+                sendEvent(taskId, "token", A2AStreamEvent.token(resultJson));
             }
 
             // 7. 先持久化不可变计划版本，再发送完成事件。
@@ -205,15 +201,21 @@ public class HostAgentService {
                 log.error("AI 计划持久化失败，任务仅保留实时结果: taskId={}", taskId, e);
                 result.setPlanId("volatile_" + taskId.replace("-", ""));
             }
-            sendEvent(emitter, "task_done", A2AStreamEvent.taskDone(result));
+            sendEvent(taskId, "task_done", A2AStreamEvent.taskDone(result));
             taskStateStore.succeed(taskId);
+            String planOutcome = result.getDataWarnings() == null || result.getDataWarnings().isEmpty()
+                    ? "succeeded" : "degraded";
+            aiPlanningMetrics.recordPlanOutcome(configuredModel, planOutcome,
+                    System.currentTimeMillis() - startedAt);
 
             log.info("行程规划完成: taskId={}", taskId);
 
         } catch (Exception e) {
             log.error("执行行程规划失败: taskId={}", taskId, e);
             taskStateStore.fail(taskId, e.getMessage());
-            sendError(emitter, e.getMessage());
+            sendError(taskId, e.getMessage());
+            aiPlanningMetrics.recordPlanOutcome(configuredModel, "failed",
+                    System.currentTimeMillis() - startedAt);
         }
     }
 
@@ -281,7 +283,15 @@ public class HostAgentService {
     private LlmItineraryPlan callStructuredPlan(TravelPlanResult result,
                                                 TravelPlanRequest request,
                                                 List<String> repairErrors) throws Exception {
-        ChatResponse response = chatModel.call(buildStructuredPrompt(result, request, repairErrors));
+        long modelStartedAt = System.nanoTime();
+        ChatResponse response;
+        try {
+            response = chatModel.call(buildStructuredPrompt(result, request, repairErrors));
+        } catch (RuntimeException e) {
+            aiPlanningMetrics.recordModelFailure(configuredModel, System.nanoTime() - modelStartedAt);
+            throw e;
+        }
+        aiPlanningMetrics.recordModelResponse(response, configuredModel, System.nanoTime() - modelStartedAt);
         if (response == null || response.getResult() == null
                 || response.getResult().getOutput() == null
                 || response.getResult().getOutput().getContent() == null
@@ -559,27 +569,16 @@ public class HostAgentService {
     /**
      * 发送SSE事件
      */
-    private void sendEvent(SseEmitter emitter, String eventName, A2AStreamEvent event) {
-        try {
-            String data = objectMapper.writeValueAsString(event);
-            emitter.send(SseEmitter.event()
-                    .name(eventName)
-                    .data(data));
-        } catch (IOException | IllegalStateException e) {
-            log.warn("发送SSE事件失败: eventName={}", eventName, e);
-        }
+    /** Stores an ordered copy so an SSE reconnect never invokes the model again. */
+    private void sendEvent(String taskId, String eventName, A2AStreamEvent event) {
+        taskEventStore.publish(taskId, eventName, event);
     }
 
-    /**
-     * 发送错误事件
-     */
-    private void sendError(SseEmitter emitter, String errorMessage) {
-        try {
-            sendEvent(emitter, "error", A2AStreamEvent.error(
-                    java.util.Map.of("message", errorMessage == null || errorMessage.isBlank()
-                            ? "服务暂时不可用" : errorMessage)));
-        } catch (Exception e) {
-            log.warn("发送错误事件失败", e);
-        }
+    private void sendError(String taskId, String errorMessage) {
+        String safeMessage = errorMessage == null || errorMessage.isBlank()
+                ? "Service temporarily unavailable" : errorMessage;
+        sendEvent(taskId, "error", A2AStreamEvent.error(java.util.Map.of("message", safeMessage)));
     }
+
+
 }

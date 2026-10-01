@@ -2,6 +2,8 @@ package com.travel.module.user.biz.api;
 
 import com.travel.common.core.result.ApiResult;
 import com.travel.module.user.biz.domain.service.UserBizService;
+import com.travel.module.user.biz.domain.service.PlatformRole;
+import com.travel.module.user.biz.domain.service.PlatformRoleAuthorizationService;
 import com.travel.module.user.biz.api.dto.SaveAiPlanRequest;
 import com.travel.module.user.biz.infra.persistence.InspirationPO;
 import com.travel.module.user.biz.infra.persistence.JourneyPO;
@@ -37,9 +39,8 @@ public class UserApi {
 
     private final UserBizService userBizService;
     private final JdbcTemplate jdbcTemplate;
+    private final PlatformRoleAuthorizationService roleAuthorization;
 
-    @Value("${travel.security.moderator-user-ids:}")
-    private String moderatorUserIds;
 
     // =====================================================================
     // 一、社区 / 社交
@@ -191,13 +192,7 @@ public class UserApi {
             @RequestBody Map<String, String> body,
             HttpServletRequest request) {
         String currentUserId = currentUserId(request);
-        Set<String> moderators = Arrays.stream(moderatorUserIds.split(","))
-                .map(String::trim).filter(value -> !value.isBlank()).collect(Collectors.toSet());
-        if (!moderators.contains(currentUserId)) {
-            throw new org.springframework.web.server.ResponseStatusException(
-                    org.springframework.http.HttpStatus.FORBIDDEN, "无平台审核权限");
-        }
-        return ApiResult.success(userBizService.reviewPlatformNote(id, currentUserId, body.getOrDefault("status", "rejected"), body.getOrDefault("message", "")));
+        roleAuthorization.requireRole(currentUserId, PlatformRole.MODERATOR);        return ApiResult.success(userBizService.reviewPlatformNote(id, currentUserId, body.getOrDefault("status", "rejected"), body.getOrDefault("message", "")));
     }
 
     /**

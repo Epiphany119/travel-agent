@@ -185,6 +185,7 @@ services:
       TRAVEL_DB_USERNAME: ${MYSQL_USER:?Set MYSQL_USER in the environment or .env file}
       TRAVEL_DB_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in the environment or .env file}
       TRAVEL_MODERATOR_USER_IDS: ${TRAVEL_MODERATOR_USER_IDS:-}
+      TRAVEL_ADMIN_USER_IDS: ${TRAVEL_ADMIN_USER_IDS:-}
       # API Keys
       WEATHER_API_KEY: ${WEATHER_API_KEY}
       GAODE_API_KEY: ${GAODE_API_KEY}

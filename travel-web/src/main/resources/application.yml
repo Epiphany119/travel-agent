@@ -81,6 +81,7 @@ travel:
     sandbox-enabled: ${TRAVEL_COMMERCE_SANDBOX_ENABLED:true}
   security:
     moderator-user-ids: ${TRAVEL_MODERATOR_USER_IDS:}
+    admin-user-ids: ${TRAVEL_ADMIN_USER_IDS:}
   # MCP Server 配置
   mcp:
     weather-url: ${WEATHER_MCP_URL:http://localhost:8081}

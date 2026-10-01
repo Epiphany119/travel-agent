@@ -210,92 +210,182 @@ export function subscribePlanStream(
 
 
 // ─── A2A SSE 流式订阅（真实后端）──────────────────────────────────────────────
+// ─── A2A SSE 流式订阅（真实后端）──────────────────────────────────────────────
 export interface A2AStreamEvent {
   event: string
   data: any
 }
 
-/**
- * 订阅 A2A 后端 SSE 流
- * 使用 GET /a2a/tasks/stream 并传递查询参数
- * 返回取消函数
- */
+/** Creates one idempotent task, then reconnects to its event stream without re-running the model. */
 export function subscribeA2AStream(
   params: TravelPlanRequest,
   onEvent: (event: { name: string; data: any }) => void
 ): () => void {
   const controller = new AbortController()
+  let lastEventId = '0'
+  let terminal = false
 
-  const queryParams = new URLSearchParams({
-    destination: params.destination,
-    days: String(params.days),
-    budget: String(params.budget),
-    travelers: String(params.travelers || 1),
-    travelStyle: params.travelStyle || '深度体验',
-    interests: (params.interests || []).join(',')
+  const reportError = (message: string, code = 'FETCH_ERROR') => {
+    onEvent({ name: 'error', data: { code, message } })
+  }
+  const waitBeforeReconnect = (milliseconds: number) => new Promise<void>((resolve) => {
+    const onAbort = () => {
+      window.clearTimeout(timer)
+      resolve()
+    }
+    const timer = window.setTimeout(() => {
+      controller.signal.removeEventListener('abort', onAbort)
+      resolve()
+    }, milliseconds)
+    controller.signal.addEventListener('abort', onAbort, { once: true })
   })
+  const newIdempotencyKey = () => {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID()
+    return 'a2a-' + Date.now() + '-' + Math.random().toString(36).slice(2)
+  }
 
-  fetch(`/a2a/tasks/stream?${queryParams.toString()}`, {
-    method: 'GET',
-    headers: sseHeaders(),
-    signal: controller.signal
-  })
-    .then(async (response) => {
-      console.log('[Agent SSE] response status:', response.status, 'content-type:', response.headers.get('content-type'))
-      if (!response.ok || !response.body) {
-        throw new Error(`HTTP ${response.status}`)
-      }
-
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      let currentEventName = ''
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-
-        buffer += decoder.decode(value, { stream: true })
-
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
-
-        for (const rawLine of lines) {
-          const line = rawLine.trim()
-          if (!line) { currentEventName = ''; continue }
-          if (line.startsWith('event:')) {
-            currentEventName = line.slice(6).trim()
-          } else if (line.startsWith('data:')) {
-            const rawData = line.slice(5).trim()
-            if (!rawData) continue
-            try {
-              const parsed = JSON.parse(rawData)
-              // 后端 SSE 格式：外层 {"event":"xxx", "data": {...}}
-              // 事件名优先取 SSE event 字段，其次取 JSON 内的 event 字段
-              const evtName = currentEventName || parsed.event || 'unknown'
-              // 数据优先取 data 字段（SSE payload），没有则用整个 parsed
-              const evtData = parsed.data !== undefined ? parsed.data : parsed
-              onEvent({ name: evtName, data: evtData })
-              currentEventName = ''
-            } catch {
-              // ignore parse error
-            }
-          } else if (line === '') {
-            currentEventName = ''
+  const createTask = async (): Promise<string | null> => {
+    const key = newIdempotencyKey()
+    for (let attempt = 0; attempt < 3 && !controller.signal.aborted; attempt++) {
+      try {
+        const headers = new Headers(sseHeaders())
+        headers.set('Accept', 'application/json')
+        headers.set('Content-Type', 'application/json')
+        headers.set('Idempotency-Key', key)
+        const response = await fetch('/a2a/tasks', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(params),
+          signal: controller.signal
+        })
+        if (!response.ok) {
+          if (response.status >= 500 && attempt < 2) {
+            await waitBeforeReconnect(300 * (attempt + 1))
+            continue
           }
+          const body = await response.text().catch(() => '')
+          reportError(body || ('创建规划任务失败（HTTP ' + response.status + '）'), 'HTTP_' + response.status)
+          return null
+        }
+        const result = await response.json()
+        if (!result.taskId) {
+          reportError('服务端未返回规划任务 ID')
+          return null
+        }
+        return String(result.taskId)
+      } catch (error: any) {
+        if (controller.signal.aborted) return null
+        if (attempt === 2) {
+          reportError(error?.message || '创建规划任务失败')
+          return null
+        }
+        await waitBeforeReconnect(300 * (attempt + 1))
+      }
+    }
+    return null
+  }
+
+  const consumeStream = async (response: Response): Promise<boolean> => {
+    if (!response.body) throw new Error('SSE 响应没有消息流')
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let eventName = ''
+    let eventId: string | null = null
+    let dataLines: string[] = []
+
+    const dispatch = () => {
+      if (eventId !== null && /^\d+$/.test(eventId)) lastEventId = eventId
+      if (dataLines.length > 0) {
+        try {
+          const parsed = JSON.parse(dataLines.join('\n'))
+          const name = eventName || parsed.event || 'unknown'
+          const data = parsed.data !== undefined ? parsed.data : parsed
+          onEvent({ name, data })
+          if (name === 'task_done' || name === 'error'
+            || (name === 'task_update' && data?.status === 'CANCELLED')) {
+            terminal = true
+          }
+        } catch {
+          // Ignore malformed event payloads; later events can still be consumed.
         }
       }
-    })
-    .catch((err) => {
-      if (err.name !== 'AbortError') {
-        onEvent({ name: 'error', data: { code: 'FETCH_ERROR', message: err.message } })
+      eventName = ''
+      eventId = null
+      dataLines = []
+    }
+
+    while (!controller.signal.aborted) {
+      const { done, value } = await reader.read()
+      if (done) {
+        if (buffer.length > 0) {
+          const line = buffer.endsWith('\r') ? buffer.slice(0, -1) : buffer
+          if (line.startsWith('id:')) eventId = line.slice(3).trim()
+          else if (line.startsWith('event:')) eventName = line.slice(6).trim()
+          else if (line.startsWith('data:')) dataLines.push(line.slice(5).replace(/^ /, ''))
+        }
+        dispatch()
+        return terminal
       }
-    })
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split(/\r?\n/)
+      buffer = lines.pop() || ''
+      for (const line of lines) {
+        if (line === '') {
+          dispatch()
+        } else if (line.startsWith(':')) {
+          continue
+        } else if (line.startsWith('id:')) {
+          eventId = line.slice(3).trim()
+        } else if (line.startsWith('event:')) {
+          eventName = line.slice(6).trim()
+        } else if (line.startsWith('data:')) {
+          dataLines.push(line.slice(5).replace(/^ /, ''))
+        }
+      }
+    }
+    return terminal
+  }
+
+  const connectWithReconnect = async (taskId: string) => {
+    let attempt = 0
+    while (!controller.signal.aborted && !terminal) {
+      try {
+        const headers = new Headers(sseHeaders())
+        if (lastEventId !== '0') headers.set('Last-Event-ID', lastEventId)
+        const response = await fetch('/a2a/tasks/' + encodeURIComponent(taskId) + '/stream', {
+          method: 'GET',
+          headers,
+          signal: controller.signal
+        })
+        if (!response.ok) {
+          const body = await response.text().catch(() => '')
+          reportError(body || ('连接规划任务失败（HTTP ' + response.status + '）'), 'HTTP_' + response.status)
+          return
+        }
+        terminal = await consumeStream(response)
+        if (terminal || controller.signal.aborted) return
+      } catch (error: any) {
+        if (controller.signal.aborted) return
+      }
+
+      if (attempt >= 7) {
+        reportError('规划结果连接中断，任务 ID: ' + taskId)
+        return
+      }
+      await waitBeforeReconnect(Math.min(500 * (2 ** attempt), 5000))
+      attempt++
+    }
+  }
+
+  void (async () => {
+    const taskId = await createTask()
+    if (taskId && !controller.signal.aborted) await connectWithReconnect(taskId)
+  })()
 
   return () => controller.abort()
 }
 
-// ─── 问卷式 Agent（流式问答 → 调API → 缓存 → 计划） ─────────────────────────
 
 export interface QuestionnaireQuestion {
   sessionId: string

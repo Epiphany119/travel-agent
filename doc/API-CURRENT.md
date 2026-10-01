@@ -15,7 +15,7 @@
 | A2A 独立配置 | `8086` | `travel-a2a-runtime` 的独立运行配置；前端当前默认走 8080 的聚合入口 |
 | MCP 独立配置 | `8081`–`8085` | 天气、POI、餐饮、预算、行程模块的独立服务配置；是否拆进同一进程取决于部署方式 |
 
-本地前端的请求基地址是 `/api`，因此浏览器不会把开发机端口写进业务代码。A2A SSE 使用 `/a2a/tasks/stream`，图片访问使用 `/uploads/...`。
+本地前端的请求基地址是 `/api`，因此浏览器不会把开发机端口写进业务代码。A2A 先以 `POST /a2a/tasks` 创建，再以 `GET /a2a/tasks/{taskId}/stream` 订阅，图片访问使用 `/uploads/...`。
 
 ### 1.2 鉴权
 
@@ -233,12 +233,18 @@ AI 计划保存使用 `POST /api/user/ai-plans/save`。该接口从 Token 获取
 
 ### 5.5 A2A Agent `/a2a/tasks`
 
+A2A 任务采用“创建一次、订阅多次”的流程。创建接口返回裸 JSON，不使用 `ApiResult` 包装；后续查询、取消和 SSE 订阅都必须由任务所有者发起。
+
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| `GET` | `/a2a/tasks/stream?...` | 创建任务并立即通过 SSE 返回规划事件 |
-| `POST` | `/a2a/tasks` | 创建异步任务，返回 `{ taskId, status }` |
-| `GET` | `/a2a/tasks/{taskId}/status` | 查询任务状态；当前实现为轻量状态占位 |
-| `GET` | `/a2a/tasks/{taskId}/stream` | 订阅指定任务 SSE；未提供 request 时使用后端默认参数 |
+| `POST` | `/a2a/tasks` | 创建或按幂等键复用任务，返回 `{ taskId, status }` |
+| `GET` | `/a2a/tasks/{taskId}/status` | 仅任务所有者查询状态 |
+| `POST` | `/a2a/tasks/{taskId}/cancel` | 仅任务所有者取消未完成任务 |
+| `GET` | `/a2a/tasks/{taskId}/stream` | 订阅已创建任务；可带 `Last-Event-ID` 续读，不会重新启动规划 |
+
+创建请求体是 `TravelPlanRequest` JSON。请求头 `Idempotency-Key` 必填，长度 8–128，仅允许字母、数字、点、下划线、冒号和短横线。同一所有者对相同请求重复提交会复用任务；相同键搭配不同请求体返回 HTTP 409。任务不存在或不属于当前用户时返回 404，避免泄露他人任务是否存在。
+
+SSE 支持 `task_update`、`tool_call`、`tool_result`、`token`、`task_done` 和 `error`。事件短期保存在 Redis，最多保留 24 小时和最近 500 条；客户端以数字 `Last-Event-ID` 从断点续读。事件过期后，已成功任务可从已保存的计划版本重建最终结果。
 
 ## 6. 前端调用边界
 
