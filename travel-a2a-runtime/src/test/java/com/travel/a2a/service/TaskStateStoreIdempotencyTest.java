@@ -46,6 +46,16 @@ class TaskStateStoreIdempotencyTest {
         assertEquals(HttpStatus.CONFLICT, conflict.getStatusCode());
     }
 
+    @Test
+    void blankIdempotencyKeyIsRejected() {
+        StringRedisTemplate redis = mock(StringRedisTemplate.class);
+        ResponseStatusException error = assertThrows(ResponseStatusException.class,
+                () -> new TaskStateStore(redis).createOrGet(
+                        "task-blank", "user-1", "default", "   ", "{}"));
+        assertEquals(HttpStatus.BAD_REQUEST, error.getStatusCode());
+        verifyNoInteractions(redis);
+    }
+
     private String fingerprint(String value) throws Exception {
         byte[] hash = MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8));
         return HexFormat.of().formatHex(hash);

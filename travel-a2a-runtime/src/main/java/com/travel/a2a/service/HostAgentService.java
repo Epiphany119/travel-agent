@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.travel.a2a.model.*;
 import com.travel.a2a.persistence.AiPlanRepository;
+import com.travel.a2a.persistence.EnterpriseAiSchema;
 import com.travel.a2a.service.orchestrator.ItineraryOrchestrator;
 import com.travel.mcp.protocol.a2a.A2AStreamEvent;
 import lombok.RequiredArgsConstructor;
@@ -33,6 +34,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 主Agent服务（协调者）
@@ -53,6 +57,7 @@ public class HostAgentService {
     private final AiPlanRepository aiPlanRepository;
     private final TaskEventStore taskEventStore;
     private final AiPlanningMetrics aiPlanningMetrics;
+    private final ScheduledExecutorService taskLeaseScheduler;
 
     @Value("${spring.ai.openai.chat.options.model:unknown}")
     private String configuredModel;
@@ -67,19 +72,27 @@ public class HostAgentService {
 
     /** Runs the plan independently of any SSE connection; events are retained for reconnects. */
     @Async("taskExecutor")
-    public void plan(TravelPlanRequest request, String taskId, String traceId) {
+    public void plan(TravelPlanRequest request, String taskId, String traceId, int attempt) {
         String previousTraceId = MDC.get("traceId");
         if (traceId != null && !traceId.isBlank()) MDC.put("traceId", traceId);
         long startedAt = System.currentTimeMillis();
+        ScheduledFuture<?> heartbeat = null;
         try {
-            executePlan(request, taskId);
+            heartbeat = taskLeaseScheduler.scheduleAtFixedRate(
+                    () -> taskStateStore.heartbeat(taskId, attempt), 20, 20, TimeUnit.SECONDS);
+            executePlan(request, taskId, attempt);
         } catch (Exception e) {
-            log.error("执行行程规划异常: taskId={}", taskId, e);
-            taskStateStore.fail(taskId, e.getMessage());
-            sendError(taskId, e.getMessage());
-            aiPlanningMetrics.recordPlanOutcome(configuredModel, "failed",
-                    System.currentTimeMillis() - startedAt);
+            if (taskStateStore.isCurrentExecution(taskId, attempt)) {
+                log.error("执行行程规划异常: taskId={}", taskId, e);
+                taskStateStore.fail(taskId, e.getMessage(), attempt);
+                sendError(taskId, e.getMessage());
+                aiPlanningMetrics.recordPlanOutcome(configuredModel, "failed",
+                        System.currentTimeMillis() - startedAt);
+            } else {
+                log.info("忽略已取消或已被新执行代次接管的任务异常: taskId={}", taskId);
+            }
         } finally {
+            if (heartbeat != null) heartbeat.cancel(false);
             if (previousTraceId == null) MDC.remove("traceId");
             else MDC.put("traceId", previousTraceId);
         }
@@ -105,9 +118,10 @@ public class HostAgentService {
         }
     }
 
-    private void executePlan(TravelPlanRequest request, String taskId) {
+    private void executePlan(TravelPlanRequest request, String taskId, int attempt) {
         long startedAt = System.currentTimeMillis();
         try {
+            if (stopIfExecutionLost(taskId, attempt, startedAt)) return;
             // 1. 发送任务开始事件
             sendEvent(taskId, "task_update", A2AStreamEvent.taskUpdate(
                     java.util.Map.of("taskId", taskId, "status", "started",
@@ -126,15 +140,11 @@ public class HostAgentService {
             sendEvent(taskId, "tool_call", A2AStreamEvent.toolCall(
                     java.util.Map.of("source", "budget", "action", "估算预算")));
 
-            if (taskStateStore.get(taskId) != null && "CANCELLED".equals(taskStateStore.get(taskId).status())) {
-                aiPlanningMetrics.recordPlanOutcome(configuredModel, "cancelled",
-                        System.currentTimeMillis() - startedAt);
-                return;
-            }
-
             // 3. 并行执行子Agent编排
             TravelPlanResult result = orchestrator.orchestrate(request);
-            taskStateStore.running(taskId, 70);
+            if (stopIfExecutionLost(taskId, attempt, startedAt)) return;
+            taskStateStore.running(taskId, 70, attempt);
+            if (stopIfExecutionLost(taskId, attempt, startedAt)) return;
 
             // 4. 发送工具结果事件
             if (result.getDataWarnings() != null) {
@@ -168,6 +178,7 @@ public class HostAgentService {
             }
 
             // 5. 发送LLM优化中的token
+            if (stopIfExecutionLost(taskId, attempt, startedAt)) return;
             sendEvent(taskId, "task_update", A2AStreamEvent.taskUpdate(
                     java.util.Map.of("taskId", taskId, "status", "optimizing",
                             "message", "LLM优化行程中...")));
@@ -178,31 +189,31 @@ public class HostAgentService {
                 log.warn("LLM结构化计划不可用，使用确定性行程兜底");
                 finalPlan = buildDeterministicPlan(result);
             }
+            if (stopIfExecutionLost(taskId, attempt, startedAt)) return;
 
-            // 分段发送最终行程
-            if (finalPlan != null && !finalPlan.isEmpty()) {
-                sendEvent(taskId, "token", A2AStreamEvent.token(finalPlan));
-            } else {
-                // 如果LLM优化失败，发送原始行程数据
-                String resultJson = objectMapper.writeValueAsString(result);
-                sendEvent(taskId, "token", A2AStreamEvent.token(resultJson));
-            }
-
-            // 7. 先持久化不可变计划版本，再发送完成事件。
+            // 7. 先持久化不可变计划版本，再发送最终内容和完成事件。
             result.setFinalPlan(finalPlan);
             TaskStateStore.TaskState state = taskStateStore.get(taskId);
             String ownerId = state == null || state.ownerId() == null || state.ownerId().isBlank()
                     ? "system" : state.ownerId();
             try {
                 aiPlanRepository.saveCompleted(ownerId, taskId, request, result,
-                        System.currentTimeMillis() - startedAt, "zhipu", configuredModel, "travel-plan-v1");
+                        System.currentTimeMillis() - startedAt, "zhipu", configuredModel, "travel-plan-v1", attempt);
             } catch (DataAccessException e) {
+                if (!EnterpriseAiSchema.isAiTaskTableMissing(e)) throw e;
                 // 未执行迁移时保留开发环境降级，但生产应将此类错误作为发布阻断项。
                 log.error("AI 计划持久化失败，任务仅保留实时结果: taskId={}", taskId, e);
                 result.setPlanId("volatile_" + taskId.replace("-", ""));
             }
+            if (!taskStateStore.isCurrentOrSucceededExecution(taskId, attempt)) return;
+            if (finalPlan != null && !finalPlan.isEmpty()) {
+                sendEvent(taskId, "token", A2AStreamEvent.token(finalPlan));
+            } else {
+                String resultJson = objectMapper.writeValueAsString(result);
+                sendEvent(taskId, "token", A2AStreamEvent.token(resultJson));
+            }
             sendEvent(taskId, "task_done", A2AStreamEvent.taskDone(result));
-            taskStateStore.succeed(taskId);
+            taskStateStore.succeed(taskId, attempt);
             String planOutcome = result.getDataWarnings() == null || result.getDataWarnings().isEmpty()
                     ? "succeeded" : "degraded";
             aiPlanningMetrics.recordPlanOutcome(configuredModel, planOutcome,
@@ -211,12 +222,25 @@ public class HostAgentService {
             log.info("行程规划完成: taskId={}", taskId);
 
         } catch (Exception e) {
+            if (!taskStateStore.isCurrentExecution(taskId, attempt)) {
+                log.info("任务已取消或执行租约已被接管，丢弃旧执行结果: taskId={}", taskId);
+                return;
+            }
             log.error("执行行程规划失败: taskId={}", taskId, e);
-            taskStateStore.fail(taskId, e.getMessage());
+            taskStateStore.fail(taskId, e.getMessage(), attempt);
             sendError(taskId, e.getMessage());
             aiPlanningMetrics.recordPlanOutcome(configuredModel, "failed",
                     System.currentTimeMillis() - startedAt);
         }
+    }
+
+    private boolean stopIfExecutionLost(String taskId, int attempt, long startedAt) {
+        if (taskStateStore.isCurrentExecution(taskId, attempt)) return false;
+        TaskStateStore.TaskState state = taskStateStore.get(taskId);
+        String outcome = state != null && "CANCELLED".equals(state.status()) ? "cancelled" : "superseded";
+        aiPlanningMetrics.recordPlanOutcome(configuredModel, outcome,
+                System.currentTimeMillis() - startedAt);
+        return true;
     }
 
     /**

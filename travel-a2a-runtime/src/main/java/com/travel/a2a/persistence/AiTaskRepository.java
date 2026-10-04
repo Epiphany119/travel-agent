@@ -3,6 +3,7 @@ package com.travel.a2a.persistence;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -49,35 +50,63 @@ public class AiTaskRepository {
                 taskId, ownerId, valueOrDefault(tenantId, "default"), blankToNull(idempotencyKey), requestJson);
     }
 
-    /** Compare-and-set prevents duplicate workers when the same idempotency key is retried. */
-    public boolean claimExecution(String taskId) {
-        return jdbcTemplate.update(
+    /**
+     * Claims a pending task or reclaims a task whose lease expired.
+     * The attempt counter is a fencing token for work from an older execution.
+     */
+    @Transactional
+    public Integer claimExecution(String taskId, int leaseSeconds) {
+        int updated = jdbcTemplate.update(
                 "UPDATE ai_task SET status='RUNNING',progress=5,attempt=attempt+1," +
                         "started_at=COALESCE(started_at,CURRENT_TIMESTAMP),updated_at=CURRENT_TIMESTAMP " +
-                        "WHERE task_id=? AND status='PENDING'",
-                taskId) == 1;
+                        "WHERE task_id=? AND (status='PENDING' OR " +
+                        "(status='RUNNING' AND updated_at < DATE_SUB(CURRENT_TIMESTAMP, INTERVAL ? SECOND)))",
+                taskId, leaseSeconds);
+        if (updated != 1) return null;
+        return jdbcTemplate.queryForObject(
+                "SELECT attempt FROM ai_task WHERE task_id=?",
+                Integer.class, taskId);
     }
 
-    public void updateState(String taskId, String status, int progress, String errorCode, String errorMessage) {
+    /** Refreshes a live execution lease without changing its fencing token. */
+    public boolean heartbeat(String taskId, int attempt) {
+        return jdbcTemplate.update(
+                "UPDATE ai_task SET updated_at=CURRENT_TIMESTAMP " +
+                        "WHERE task_id=? AND status='RUNNING' AND attempt=?",
+                taskId, attempt) == 1;
+    }
+
+    public int updateState(String taskId, String status, int progress, String errorCode,
+                           String errorMessage, Integer expectedAttempt) {
+        String attemptPredicate = expectedAttempt == null ? "" : " AND attempt=?";
         if ("RUNNING".equals(status)) {
-            jdbcTemplate.update(
-                    "UPDATE ai_task SET status=?,progress=?,attempt=attempt+1,started_at=COALESCE(started_at,CURRENT_TIMESTAMP)," +
-                            "error_code=NULL,error_message=NULL,updated_at=CURRENT_TIMESTAMP " +
-                            "WHERE task_id=? AND status NOT IN ('SUCCEEDED','FAILED','CANCELLED')",
-                    status, progress, taskId);
-            return;
+            String sql = "UPDATE ai_task SET status=?,progress=?,started_at=COALESCE(started_at,CURRENT_TIMESTAMP)," +
+                    "error_code=NULL,error_message=NULL,updated_at=CURRENT_TIMESTAMP " +
+                    "WHERE task_id=? AND status NOT IN ('SUCCEEDED','FAILED','CANCELLED')" + attemptPredicate;
+            return expectedAttempt == null
+                    ? jdbcTemplate.update(sql, status, progress, taskId)
+                    : jdbcTemplate.update(sql, status, progress, taskId, expectedAttempt);
         }
         if ("SUCCEEDED".equals(status)) {
-            jdbcTemplate.update(
-                    "UPDATE ai_task SET status=?,progress=?,error_code=NULL,error_message=NULL,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP " +
-                            "WHERE task_id=? AND status NOT IN ('SUCCEEDED','FAILED','CANCELLED')",
-                    status, progress, taskId);
-            return;
+            String sql = "UPDATE ai_task SET status=?,progress=?,error_code=NULL,error_message=NULL,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP " +
+                    "WHERE task_id=? AND status NOT IN ('SUCCEEDED','FAILED','CANCELLED')" + attemptPredicate;
+            return expectedAttempt == null
+                    ? jdbcTemplate.update(sql, status, progress, taskId)
+                    : jdbcTemplate.update(sql, status, progress, taskId, expectedAttempt);
         }
-        jdbcTemplate.update(
-                "UPDATE ai_task SET status=?,progress=?,error_code=?,error_message=?,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP " +
+        String sql = "UPDATE ai_task SET status=?,progress=?,error_code=?,error_message=?,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP " +
+                "WHERE task_id=? AND status NOT IN ('SUCCEEDED','FAILED','CANCELLED')" + attemptPredicate;
+        return expectedAttempt == null
+                ? jdbcTemplate.update(sql, status, progress, errorCode, truncate(errorMessage, 1024), taskId)
+                : jdbcTemplate.update(sql, status, progress, errorCode, truncate(errorMessage, 1024), taskId, expectedAttempt);
+    }
+
+    public boolean cancelTask(String taskId) {
+        return jdbcTemplate.update(
+                "UPDATE ai_task SET status='CANCELLED',progress=0,error_code='AI_TASK_CANCELLED'," +
+                        "error_message='cancelled by user',completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP " +
                         "WHERE task_id=? AND status NOT IN ('SUCCEEDED','FAILED','CANCELLED')",
-                status, progress, errorCode, truncate(errorMessage, 1024), taskId);
+                taskId) == 1;
     }
 
     public void saveOutcome(String taskId, String planId, String outputJson) {

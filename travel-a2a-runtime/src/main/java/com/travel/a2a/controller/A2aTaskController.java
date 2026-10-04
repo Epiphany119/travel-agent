@@ -70,7 +70,12 @@ public class A2aTaskController {
         var state = taskStateStore.get(taskId);
         if (state == null) return Map.of("taskId", taskId, "status", "NOT_FOUND");
         requireOwner(state, currentUserId(http));
-        taskStateStore.cancel(taskId);
+        boolean cancelled = taskStateStore.cancel(taskId);
+        if (!cancelled) {
+            var latest = taskStateStore.get(taskId);
+            return Map.of("taskId", taskId,
+                    "status", latest == null ? "NOT_FOUND" : latest.status());
+        }
         taskEventStore.publish(taskId, "task_update",
                 A2AStreamEvent.taskUpdate(Map.of("taskId", taskId, "status", "CANCELLED",
                         "message", "任务已取消")));
@@ -106,14 +111,15 @@ public class A2aTaskController {
     }
 
     private boolean startPlanIfPending(TravelPlanRequest request, String taskId) {
-        if (!taskStateStore.claimExecution(taskId)) return false;
+        int attempt = taskStateStore.claimExecutionAttempt(taskId);
+        if (attempt < 0) return false;
         String traceId = MDC.get("traceId");
         try {
-            hostAgentService.plan(request, taskId, traceId);
+            hostAgentService.plan(request, taskId, traceId, attempt);
             return true;
         } catch (RejectedExecutionException e) {
             log.warn("A2A 执行器已满载，拒绝任务: taskId={}", taskId);
-            taskStateStore.fail(taskId, "服务繁忙，请稍后重试");
+            taskStateStore.fail(taskId, "服务繁忙，请稍后重试", attempt);
             taskEventStore.publish(taskId, "error",
                     A2AStreamEvent.error(Map.of("message", "服务繁忙，请稍后重试")));
             return false;

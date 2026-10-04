@@ -39,7 +39,14 @@ public class AiPlanRepository {
     @Transactional
     public Completion saveCompleted(String ownerId, String taskId, TravelPlanRequest request,
                                     TravelPlanResult result, long latencyMs,
-                                    String provider, String modelName, String promptVersion) {
+                                    String provider, String modelName, String promptVersion, int attempt) {
+        List<TaskExecution> taskRows = jdbcTemplate.query(
+                "SELECT status,attempt FROM ai_task WHERE task_id=? FOR UPDATE",
+                (rs, rowNum) -> new TaskExecution(rs.getString("status"), rs.getInt("attempt")), taskId);
+        if (taskRows.isEmpty() || !"RUNNING".equals(taskRows.get(0).status())
+                || taskRows.get(0).attempt() != attempt) {
+            throw new IllegalStateException("任务已取消或执行租约已失效，不能保存旧规划结果");
+        }
         Optional<PlanRecord> existing = findByTaskId(taskId);
         if (existing.isPresent()) {
             result.setPlanId(existing.get().planId());
@@ -66,10 +73,13 @@ public class AiPlanRepository {
                 planId, 1, requestJson, outputJson, qualityStatus, qualityScore,
                 toJson(result.getDataWarnings()), valueOrDefault(provider, "unknown"),
                 valueOrDefault(modelName, "unknown"), valueOrDefault(promptVersion, "v1"), ownerId);
-        jdbcTemplate.update(
+        int completed = jdbcTemplate.update(
                 "UPDATE ai_task SET plan_id=?,output_json=?,status='SUCCEEDED',progress=100,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP " +
-                        "WHERE task_id=? AND status NOT IN ('FAILED','CANCELLED')",
-                planId, outputJson, taskId);
+                        "WHERE task_id=? AND status='RUNNING' AND attempt=?",
+                planId, outputJson, taskId, attempt);
+        if (completed != 1) {
+            throw new IllegalStateException("任务状态已改变，计划持久化事务回滚");
+        }
         jdbcTemplate.update(
                 "INSERT INTO ai_usage_ledger(task_id,owner_id,tenant_id,provider,model_name,prompt_tokens,completion_tokens,latency_ms,estimated_cost,status,created_at) " +
                         "VALUES(?,?, 'default',?,?,NULL,NULL,?,NULL, 'SUCCEEDED',CURRENT_TIMESTAMP)",
@@ -175,6 +185,8 @@ public class AiPlanRepository {
     private String valueOrDefault(String value, String fallback) {
         return value == null || value.isBlank() ? fallback : value;
     }
+
+    private record TaskExecution(String status, int attempt) { }
 
     public record Completion(String planId, int version, boolean created) { }
 

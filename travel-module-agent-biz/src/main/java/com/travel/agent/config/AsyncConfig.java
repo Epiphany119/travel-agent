@@ -8,6 +8,8 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -52,6 +54,17 @@ public class AsyncConfig {
         executor.setThreadNamePrefix("A2A-SSE-");
         executor.setRejectedExecutionHandler(new ThreadPoolExecutor.AbortPolicy());
         executor.initialize();
+        return executor;
+    }
+
+    @Bean(name = "taskLeaseScheduler", destroyMethod = "shutdown")
+    public ScheduledExecutorService taskLeaseScheduler() {
+        ScheduledThreadPoolExecutor executor = new ScheduledThreadPoolExecutor(2, runnable -> {
+            Thread thread = new Thread(runnable, "Task-Lease-Heartbeat");
+            thread.setDaemon(true);
+            return thread;
+        });
+        executor.setRemoveOnCancelPolicy(true);
         return executor;
     }
 
