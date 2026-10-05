@@ -74,7 +74,7 @@ public class AiPlanRepository {
                 toJson(result.getDataWarnings()), valueOrDefault(provider, "unknown"),
                 valueOrDefault(modelName, "unknown"), valueOrDefault(promptVersion, "v1"), ownerId);
         int completed = jdbcTemplate.update(
-                "UPDATE ai_task SET plan_id=?,output_json=?,status='SUCCEEDED',progress=100,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP " +
+                "UPDATE ai_task SET plan_id=?,output_json=?,status='SYNC_PENDING',progress=99,completed_at=NULL,updated_at=CURRENT_TIMESTAMP " +
                         "WHERE task_id=? AND status='RUNNING' AND attempt=?",
                 planId, outputJson, taskId, attempt);
         if (completed != 1) {
@@ -90,7 +90,8 @@ public class AiPlanRepository {
                 "INSERT INTO ai_outbox_event(event_id,aggregate_type,aggregate_id,event_type,payload_json,status,attempts,next_attempt_at,created_at,updated_at) " +
                         "VALUES(?,?,?,?,?,'PENDING',0,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)",
                 UUID.randomUUID().toString().replace("-", ""), "AI_PLAN", planId,
-                "AI_PLAN_CREATED", outputJson);
+                "AI_PLAN_CREATED", toJson(new AiOutboxPayload.PlanCompleted(
+                        taskId, planId, attempt, result, valueOrDefault(modelName, "unknown"), latencyMs)));
         return new Completion(planId, 1, true);
     }
 

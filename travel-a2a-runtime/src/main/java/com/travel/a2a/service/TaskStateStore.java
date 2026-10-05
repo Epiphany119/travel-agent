@@ -295,8 +295,6 @@ public class TaskStateStore {
 
     public void running(String taskId, int progress) { update(taskId, "RUNNING", progress, null, null, null); }
     public void running(String taskId, int progress, int attempt) { update(taskId, "RUNNING", progress, null, null, attempt); }
-    public void succeed(String taskId) { update(taskId, "SUCCEEDED", 100, null, null, null); }
-    public void succeed(String taskId, int attempt) { update(taskId, "SUCCEEDED", 100, null, null, attempt); }
     public void fail(String taskId, String error) { update(taskId, "FAILED", 0, "AI_TASK_FAILED", error, null); }
     public void fail(String taskId, String error, int attempt) { update(taskId, "FAILED", 0, "AI_TASK_FAILED", error, attempt); }
 
@@ -414,15 +412,18 @@ public class TaskStateStore {
     }
 
     private void mirror(AiTaskRepository.TaskRecord record) {
-        redis.opsForHash().put(key(record.taskId()), "status", record.status());
+        String visibleStatus = visibleStatus(record);
+        redis.opsForHash().put(key(record.taskId()), "status", visibleStatus);
         redis.opsForHash().put(key(record.taskId()), "backingStore", "MYSQL");
         redis.opsForHash().put(key(record.taskId()), "ownerId", value(record.ownerId()));
         redis.opsForHash().put(key(record.taskId()), "idempotencyKey", value(record.idempotencyKey()));
         redis.opsForHash().put(key(record.taskId()), "requestFingerprint", fingerprint(record.requestJson()));
-        redis.opsForHash().put(key(record.taskId()), "progress", String.valueOf(record.progress()));
+        int visibleProgress = "SYNC_PENDING".equals(visibleStatus) ? 99 : record.progress();
+        redis.opsForHash().put(key(record.taskId()), "progress", String.valueOf(visibleProgress));
         redis.opsForHash().put(key(record.taskId()), "attempt", String.valueOf(record.attempt()));
         redis.opsForHash().put(key(record.taskId()), "planId", value(record.planId()));
-        redis.opsForHash().put(key(record.taskId()), "error", value(record.errorMessage()));
+        redis.opsForHash().put(key(record.taskId()), "error",
+                "SYNC_PENDING".equals(visibleStatus) ? "" : value(record.errorMessage()));
         redis.opsForHash().put(key(record.taskId()), "createdAt", instantText(record.createdAt()));
         redis.opsForHash().put(key(record.taskId()), "updatedAt", instantText(record.updatedAt()));
         redis.expire(key(record.taskId()), TTL);
@@ -443,13 +444,24 @@ public class TaskStateStore {
     }
 
     private TaskState fromRecord(AiTaskRepository.TaskRecord record) {
-        return new TaskState(record.taskId(), record.status(), record.progress(), record.errorMessage(),
+        String visibleStatus = visibleStatus(record);
+        int visibleProgress = "SYNC_PENDING".equals(visibleStatus) ? 99 : record.progress();
+        return new TaskState(record.taskId(), visibleStatus, visibleProgress,
+                "SYNC_PENDING".equals(visibleStatus) ? null : record.errorMessage(),
                 record.updatedAt() == null ? Instant.now() : record.updatedAt(), record.ownerId(),
                 record.planId(), record.idempotencyKey(), record.attempt());
     }
 
+    private String visibleStatus(AiTaskRepository.TaskRecord record) {
+        if ("SYNC_PENDING".equals(record.status())) return "SYNC_PENDING";
+        if (("SUCCEEDED".equals(record.status()) || "FAILED".equals(record.status()))
+                && !"SENT".equals(record.outboxStatus())) return "SYNC_PENDING";
+        return record.status();
+    }
+
     private boolean isTerminal(String status) {
-        return "SUCCEEDED".equals(status) || "FAILED".equals(status) || "CANCELLED".equals(status);
+        return "SUCCEEDED".equals(status) || "FAILED".equals(status)
+                || "CANCELLED".equals(status) || "SYNC_PENDING".equals(status);
     }
     private int integer(Object value) {
         try { return Integer.parseInt(String.valueOf(value)); } catch (RuntimeException ignored) { return 0; }

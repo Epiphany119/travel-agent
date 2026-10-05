@@ -102,7 +102,12 @@ public class HostAgentService {
     public void replayCompleted(String taskId) {
         try {
             TaskStateStore.TaskState state = taskStateStore.get(taskId);
-            if (state == null || state.planId() == null || state.ownerId() == null) return;
+            if (state == null) return;
+            if ("FAILED".equals(state.status()) || "CANCELLED".equals(state.status())) {
+                sendError(taskId, state.error());
+                return;
+            }
+            if (!"SUCCEEDED".equals(state.status()) || state.planId() == null || state.ownerId() == null) return;
             Map<String, Object> version = aiPlanRepository.getVersion(state.planId(), 1, state.ownerId());
             if (version == null || version.get("output_json") == null) return;
             TravelPlanResult result = objectMapper.readValue(
@@ -191,7 +196,7 @@ public class HostAgentService {
             }
             if (stopIfExecutionLost(taskId, attempt, startedAt)) return;
 
-            // 7. 先持久化不可变计划版本，再发送最终内容和完成事件。
+            // 7. Commit the plan and Outbox event first. The dispatcher owns terminal SSE delivery.
             result.setFinalPlan(finalPlan);
             TaskStateStore.TaskState state = taskStateStore.get(taskId);
             String ownerId = state == null || state.ownerId() == null || state.ownerId().isBlank()
@@ -201,25 +206,16 @@ public class HostAgentService {
                         System.currentTimeMillis() - startedAt, "zhipu", configuredModel, "travel-plan-v1", attempt);
             } catch (DataAccessException e) {
                 if (!EnterpriseAiSchema.isAiTaskTableMissing(e)) throw e;
-                // 未执行迁移时保留开发环境降级，但生产应将此类错误作为发布阻断项。
-                log.error("AI 计划持久化失败，任务仅保留实时结果: taskId={}", taskId, e);
-                result.setPlanId("volatile_" + taskId.replace("-", ""));
+                String migrationMessage = "企业 AI 数据库迁移尚未完成，本次计划未保存。";
+                log.error("AI plan completion is blocked because the enterprise database migration is missing: taskId={}",
+                        taskId, e);
+                taskStateStore.fail(taskId, migrationMessage, attempt);
+                sendError(taskId, migrationMessage);
+                aiPlanningMetrics.recordPlanOutcome(configuredModel, "failed",
+                        System.currentTimeMillis() - startedAt);
+                return;
             }
-            if (!taskStateStore.isCurrentOrSucceededExecution(taskId, attempt)) return;
-            if (finalPlan != null && !finalPlan.isEmpty()) {
-                sendEvent(taskId, "token", A2AStreamEvent.token(finalPlan));
-            } else {
-                String resultJson = objectMapper.writeValueAsString(result);
-                sendEvent(taskId, "token", A2AStreamEvent.token(resultJson));
-            }
-            sendEvent(taskId, "task_done", A2AStreamEvent.taskDone(result));
-            taskStateStore.succeed(taskId, attempt);
-            String planOutcome = result.getDataWarnings() == null || result.getDataWarnings().isEmpty()
-                    ? "succeeded" : "degraded";
-            aiPlanningMetrics.recordPlanOutcome(configuredModel, planOutcome,
-                    System.currentTimeMillis() - startedAt);
-
-            log.info("行程规划完成: taskId={}", taskId);
+            log.info("AI plan persisted and is awaiting MySQL/Redis synchronization: taskId={}", taskId);
 
         } catch (Exception e) {
             if (!taskStateStore.isCurrentExecution(taskId, attempt)) {

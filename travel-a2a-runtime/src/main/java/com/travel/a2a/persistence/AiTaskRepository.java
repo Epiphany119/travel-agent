@@ -1,6 +1,7 @@
 package com.travel.a2a.persistence;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,19 +28,19 @@ public class AiTaskRepository {
 
     public Optional<TaskRecord> findByTaskId(String taskId) {
         List<TaskRecord> rows = jdbcTemplate.query(
-                "SELECT task_id,owner_id,idempotency_key,request_json,output_json,status,progress,attempt,plan_id,error_code,error_message,created_at,started_at,completed_at,updated_at " +
+                "SELECT task_id,owner_id,idempotency_key,request_json,output_json,status,progress,attempt,plan_id,error_code,error_message,created_at,started_at,completed_at,updated_at,'SENT' AS outbox_status " +
                         "FROM ai_task WHERE task_id=? LIMIT 1",
                 this::map, taskId);
-        return rows.stream().findFirst();
+        return rows.stream().findFirst().map(this::attachOutboxStatus);
     }
 
     public Optional<TaskRecord> findByIdempotency(String ownerId, String idempotencyKey) {
         if (isBlank(ownerId) || isBlank(idempotencyKey)) return Optional.empty();
         List<TaskRecord> rows = jdbcTemplate.query(
-                "SELECT task_id,owner_id,idempotency_key,request_json,output_json,status,progress,attempt,plan_id,error_code,error_message,created_at,started_at,completed_at,updated_at " +
+                "SELECT task_id,owner_id,idempotency_key,request_json,output_json,status,progress,attempt,plan_id,error_code,error_message,created_at,started_at,completed_at,updated_at,'SENT' AS outbox_status " +
                         "FROM ai_task WHERE owner_id=? AND idempotency_key=? LIMIT 1",
                 this::map, ownerId, idempotencyKey);
-        return rows.stream().findFirst();
+        return rows.stream().findFirst().map(this::attachOutboxStatus);
     }
 
     public void insert(String taskId, String ownerId, String tenantId,
@@ -78,24 +79,20 @@ public class AiTaskRepository {
 
     public int updateState(String taskId, String status, int progress, String errorCode,
                            String errorMessage, Integer expectedAttempt) {
+        if ("SUCCEEDED".equals(status)) {
+            throw new IllegalArgumentException("AI task success must pass through the Outbox synchronization barrier");
+        }
         String attemptPredicate = expectedAttempt == null ? "" : " AND attempt=?";
         if ("RUNNING".equals(status)) {
             String sql = "UPDATE ai_task SET status=?,progress=?,started_at=COALESCE(started_at,CURRENT_TIMESTAMP)," +
                     "error_code=NULL,error_message=NULL,updated_at=CURRENT_TIMESTAMP " +
-                    "WHERE task_id=? AND status NOT IN ('SUCCEEDED','FAILED','CANCELLED')" + attemptPredicate;
-            return expectedAttempt == null
-                    ? jdbcTemplate.update(sql, status, progress, taskId)
-                    : jdbcTemplate.update(sql, status, progress, taskId, expectedAttempt);
-        }
-        if ("SUCCEEDED".equals(status)) {
-            String sql = "UPDATE ai_task SET status=?,progress=?,error_code=NULL,error_message=NULL,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP " +
-                    "WHERE task_id=? AND status NOT IN ('SUCCEEDED','FAILED','CANCELLED')" + attemptPredicate;
+                    "WHERE task_id=? AND status NOT IN ('SUCCEEDED','FAILED','CANCELLED','SYNC_PENDING')" + attemptPredicate;
             return expectedAttempt == null
                     ? jdbcTemplate.update(sql, status, progress, taskId)
                     : jdbcTemplate.update(sql, status, progress, taskId, expectedAttempt);
         }
         String sql = "UPDATE ai_task SET status=?,progress=?,error_code=?,error_message=?,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP " +
-                "WHERE task_id=? AND status NOT IN ('SUCCEEDED','FAILED','CANCELLED')" + attemptPredicate;
+                "WHERE task_id=? AND status NOT IN ('SUCCEEDED','FAILED','CANCELLED','SYNC_PENDING')" + attemptPredicate;
         return expectedAttempt == null
                 ? jdbcTemplate.update(sql, status, progress, errorCode, truncate(errorMessage, 1024), taskId)
                 : jdbcTemplate.update(sql, status, progress, errorCode, truncate(errorMessage, 1024), taskId, expectedAttempt);
@@ -105,15 +102,8 @@ public class AiTaskRepository {
         return jdbcTemplate.update(
                 "UPDATE ai_task SET status='CANCELLED',progress=0,error_code='AI_TASK_CANCELLED'," +
                         "error_message='cancelled by user',completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP " +
-                        "WHERE task_id=? AND status NOT IN ('SUCCEEDED','FAILED','CANCELLED')",
+                        "WHERE task_id=? AND status NOT IN ('SUCCEEDED','FAILED','CANCELLED','SYNC_PENDING')",
                 taskId) == 1;
-    }
-
-    public void saveOutcome(String taskId, String planId, String outputJson) {
-        jdbcTemplate.update(
-                "UPDATE ai_task SET plan_id=?,output_json=?,status='SUCCEEDED',progress=100,completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP " +
-                        "WHERE task_id=? AND status NOT IN ('FAILED','CANCELLED')",
-                planId, outputJson, taskId);
     }
 
     public record TaskRecord(
@@ -131,7 +121,41 @@ public class AiTaskRepository {
             Instant createdAt,
             Instant startedAt,
             Instant completedAt,
-            Instant updatedAt) {
+            Instant updatedAt,
+            String outboxStatus) {
+        public TaskRecord(String taskId, String ownerId, String idempotencyKey, String requestJson,
+                          String outputJson, String status, int progress, int attempt, String planId,
+                          String errorCode, String errorMessage, Instant createdAt, Instant startedAt,
+                          Instant completedAt, Instant updatedAt) {
+            this(taskId, ownerId, idempotencyKey, requestJson, outputJson, status, progress, attempt,
+                    planId, errorCode, errorMessage, createdAt, startedAt, completedAt, updatedAt, "SENT");
+        }
+    }
+
+    private TaskRecord attachOutboxStatus(TaskRecord task) {
+        if (isBlank(task.planId()) && !"SYNC_PENDING".equals(task.status())) return task;
+        try {
+            List<String> statuses = jdbcTemplate.query(
+                    "SELECT status FROM ai_outbox_event WHERE " +
+                            "(aggregate_type='AI_PLAN' AND aggregate_id=?) OR " +
+                            "(aggregate_type='AI_TASK' AND aggregate_id=?) " +
+                            "ORDER BY id DESC LIMIT 1",
+                    (rs, rowNum) -> rs.getString("status"), task.planId(), task.taskId());
+            String status = statuses.isEmpty() ? "MISSING" : statuses.get(0);
+            return copyWithOutboxStatus(task, status);
+        } catch (DataAccessException e) {
+            if (EnterpriseAiSchema.isTableMissing(e, "ai_outbox_event")) {
+                return copyWithOutboxStatus(task, "MISSING");
+            }
+            throw e;
+        }
+    }
+
+    private TaskRecord copyWithOutboxStatus(TaskRecord task, String outboxStatus) {
+        return new TaskRecord(task.taskId(), task.ownerId(), task.idempotencyKey(), task.requestJson(),
+                task.outputJson(), task.status(), task.progress(), task.attempt(), task.planId(),
+                task.errorCode(), task.errorMessage(), task.createdAt(), task.startedAt(),
+                task.completedAt(), task.updatedAt(), outboxStatus);
     }
 
     private TaskRecord map(ResultSet rs, int rowNum) throws SQLException {
@@ -150,7 +174,8 @@ public class AiTaskRepository {
                 toInstant(rs.getObject("created_at", LocalDateTime.class)),
                 toInstant(rs.getObject("started_at", LocalDateTime.class)),
                 toInstant(rs.getObject("completed_at", LocalDateTime.class)),
-                toInstant(rs.getObject("updated_at", LocalDateTime.class)));
+                toInstant(rs.getObject("updated_at", LocalDateTime.class)),
+                rs.getString("outbox_status"));
     }
 
     private Instant toInstant(LocalDateTime value) {

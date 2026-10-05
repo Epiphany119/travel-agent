@@ -61,7 +61,9 @@ public class A2aTaskController {
         response.put("progress", state.progress());
         response.put("error", state.error() == null ? "" : state.error());
         response.put("updatedAt", state.updatedAt().toString());
-        if (state.planId() != null) response.put("planId", state.planId());
+        if ("SUCCEEDED".equals(state.status()) && state.planId() != null) {
+            response.put("planId", state.planId());
+        }
         return response;
     }
 

@@ -30,4 +30,14 @@ class EnterpriseAiSchemaTest {
 
         assertFalse(EnterpriseAiSchema.isAiTaskTableMissing(unavailable));
     }
+
+    @Test
+    void distinguishesMissingOutboxFromMissingTaskTableInAQueryThatMentionsBoth() {
+        var missingOutbox = new BadSqlGrammarException("task lookup",
+                "SELECT * FROM ai_task WHERE task_id=? AND EXISTS (SELECT 1 FROM ai_outbox_event)",
+                new SQLException("Table 'travel.ai_outbox_event' doesn't exist", "42S02", 1146));
+
+        assertFalse(EnterpriseAiSchema.isAiTaskTableMissing(missingOutbox));
+        assertTrue(EnterpriseAiSchema.isTableMissing(missingOutbox, "ai_outbox_event"));
+    }
 }

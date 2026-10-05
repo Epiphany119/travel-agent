@@ -531,3 +531,43 @@ GET /a2a/tasks/{taskId}/stream
 - 执行并验证企业数据库迁移；接通 Outbox 消费、重试、幂等消费与告警；用真实数据库做并发插入、取消与完成竞态、崩溃后恢复验证。
 - 当前恢复依赖客户端在租约过期后以原幂等键重试；尚无自动任务扫描和 worker 重启恢复。数据库迁移未完成时，Redis 临时状态不能作为生产持久化保证。
 - AI 反馈与实际出行结果、完整租户隔离/RBAC、成本账本与运营告警、真实支付与供应商交易仍按前述 PRD 阶段推进。
+
+### 9.12 跨 MySQL/Redis 同步屏障与补偿回滚
+
+#### 验收语义
+
+用户要求一次计划完成作为一个业务事件处理：MySQL 计划与 Outbox 先可靠提交，Redis 未确认前不向用户返回或推送成功；Redis 确认后才对外显示 SUCCEEDED。同步超过重试预算且确认 Redis 未应用该事件时，MySQL 通过补偿事务撤销计划的业务可用状态，并继续把回滚事件投递到 Redis。
+
+Spring 的事务注解只管理 MySQL 事务，不能在 MySQL 已提交后因 Redis 写失败回滚该事务。因此本方案提供业务层成功屏障与 Saga 补偿，不宣称 MySQL 与 Redis 组成物理上的单一 ACID 事务。Outbox 保证业务数据与待投递事件同事务提交；Redis Lua 保证 Redis 内的任务终态、幂等标记与 SSE 完成事件原子更新。
+
+#### 实施链路
+
+1. 计划结果、版本、审计、用量与 AI_PLAN_CREATED Outbox 在同一 MySQL 事务提交；任务进入 SYNC_PENDING，该状态不可被第二个规划执行器 claim。
+2. Outbox worker 按事件 ID 幂等处理；MySQL 事务先将任务推进为数据库侧完成并将 Outbox 标记为 DB_COMMITTED。读取接口在 Outbox 尚未 SENT 时仍对外返回 SYNC_PENDING。
+3. Redis Lua 一次性写入任务成功镜像、幂等投递标记和 token/task_done 事件；Redis 成功后 Outbox 标记为 SENT。接口此后才对外显示成功。若 Redis 已应用但进程未收到确认，重试依靠事件 ID 去重后补写 SENT。
+4. 同步重试超过预算后，先查询 Redis 投递标记。若确认未应用，补偿事务将计划归档、任务置为失败、原 Outbox 标为失败，并创建 AI_PLAN_SYNC_ROLLED_BACK 反向事件；反向事件幂等写入 Redis 失败状态与 SSE 错误事件。
+5. 若多次重试后 Redis 仍不可查询，无法区分“命令未执行”和“Redis 已执行但响应丢失”。此时保持同步待处理并记录错误日志，恢复 Redis 后先对账再决定补偿，不能盲目回滚一个已经成功写入 Redis 的事件。
+
+#### 本轮编码边界
+
+- 使用迁移中已有的 ai_task.status、ai_outbox_event.status/attempts/next_attempt_at 字段表达同步阶段，不修改、不执行 data/enterprise_ai_migration.sql。
+- Outbox 仅派发本链路的 AI_PLAN_CREATED 与 AI_PLAN_SYNC_ROLLED_BACK 事件；其他业务事件仍由各自阶段实现消费者。
+- 迁移未执行时不得把 Redis-only 规划结果报告为同步成功；AI 计划链路应明确失败或保持不可用，防止违反双存储成功屏障。
+- 本地单元测试验证状态门禁、重试幂等与补偿流程；唯一索引、MySQL 行锁和 SQL 方言需迁移后通过真实数据库集成验收。
+
+#### 编码进度（2026-10-05）
+
+本节进度覆盖 9.11（2026-10-04）中“Outbox 尚无消费者”的历史状态；9.11 保留当日记录，本节为最新实现状态。
+
+- 已完成：`AiPlanRepository.saveCompleted` 在一个 MySQL 事务内写计划、不可变版本、任务 `SYNC_PENDING`、用量、审计和 `AI_PLAN_CREATED` Outbox。未执行迁移时，不再生成 `volatile_` 计划并冒充成功；任务会明确失败。
+- 已完成：新增 Outbox 定时派发，使用短事务行锁、30 秒租约、递增 attempts 和指数退避。计划先到数据库侧 `DB_COMMITTED`，Redis 确认后 Outbox 才变为 `SENT`。
+- 已完成：Redis Lua 在同一个任务 Hash 中原子写任务终态、事件去重标记及 token/task_done 或失败 SSE 事件；SSE 在 MySQL Outbox 确认 `SENT` 前暂缓发送终态通知。保留旧 SSE List 的读取兼容。
+- 已完成：每次派发使用递增 fencing token；连续失败达到 8 次后进入对账/补偿检查。用新的协调 token 屏蔽过期 worker，再查 Redis 去重标记。确认没有写入且 SQL attempts 仍属于本次协调时，事务归档计划、失败任务、关闭原事件并创建回滚 Outbox 与审计；AI 用量账本保留真实模型调用成本。Redis 不可查询时保持 `SYNC_PENDING` 并继续退避重试，不做不确定回滚。
+- 已完成：普通状态更新和取消不能覆盖 `SYNC_PENDING`；直接成功更新入口已移除，最终成功只由 Outbox 推进。读取端把尚未 `SENT` 的成功或补偿失败映射为 `SYNC_PENDING`，任务状态接口在最终成功确认前不返回 `planId`。Redis 终态回写与 SSE 消息不再由规划线程提前单独发送；过期后重建 SSE 也只重放已确认成功或失败的结果。
+- JDK 17 验收：`mvn -pl travel-a2a-runtime -am -DforkCount=0 test` 完成，runtime 29 项、MCP client 9 项通过，0 失败。新增 Outbox 顺序、重试补偿、过期 worker fencing、缺失表分类与成功旁路拦截单元测试。
+- JDK 17 全项目验收：根目录 `mvn -DskipTests compile` 完成，18 个 Maven 模块均编译成功，包括 `travel-web`。
+- 本轮仍未修改或执行 `data/enterprise_ai_migration.sql`。因此尚未通过真实 MySQL 的锁、事务隔离和 SQL 方言验证，也未对运行中的 Redis 做断连、超时和故障恢复演练；这些是迁移执行后的验收项。
+
+本实现提供成功屏障和 Saga 补偿，不是 MySQL 与 Redis 的物理 ACID 事务。生产验收仍需执行数据库迁移，配置持久 Redis，并在 Redis 故障、MySQL 确认失败和 worker 崩溃场景下做集成演练。
+
+本轮未接 PagerDuty/邮件等运营告警通道；目前在达到对账阈值或 Outbox 表缺失时只记录 error 日志，后续需将待同步时长、attempts 和 `last_error` 接入监控告警。
