@@ -15,10 +15,10 @@ services:
     container_name: travel-mysql
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in the environment or .env file}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set_MYSQL_ROOT_PASSWORD_in_environment_or_.env}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-travel_agent}
-      MYSQL_USER: ${MYSQL_USER:-travel}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in the environment or .env file}
+      MYSQL_USER: ${MYSQL_USER:?Set_MYSQL_USER_in_environment_or_.env}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set_MYSQL_PASSWORD_in_environment_or_.env}
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
@@ -41,7 +41,7 @@ services:
     container_name: travel-weather
     restart: unless-stopped
     environment:
-      AMAP_KEY: ${AMAP_KEY:-${GAODE_API_KEY}}
+      AMAP_KEY: ${AMAP_KEY:?Set_AMAP_KEY_in_environment_or_.env}}
       WEATHER_API_KEY: ${WEATHER_API_KEY}
       JAVA_OPTS: "-Xms256m -Xmx512m"
     healthcheck:
@@ -61,7 +61,7 @@ services:
     container_name: travel-poi
     restart: unless-stopped
     environment:
-      AMAP_KEY: ${AMAP_KEY:-${GAODE_API_KEY}}
+      AMAP_KEY: ${AMAP_KEY:?Set_AMAP_KEY_in_environment_or_.env}}
       JAVA_OPTS: "-Xms256m -Xmx512m"
     healthcheck:
       test: ["CMD-SHELL", "nc -z localhost 8082 || exit 1"]
@@ -182,8 +182,8 @@ services:
     environment:
       # Database
       TRAVEL_DB_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE:-travel_agent}?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
-      TRAVEL_DB_USERNAME: ${MYSQL_USER:?Set MYSQL_USER in the environment or .env file}
-      TRAVEL_DB_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in the environment or .env file}
+      TRAVEL_DB_USERNAME: ${MYSQL_USER:?Set_MYSQL_USER_in_environment_or_.env}
+      TRAVEL_DB_PASSWORD: ${MYSQL_PASSWORD:?Set_MYSQL_PASSWORD_in_environment_or_.env}
       TRAVEL_MODERATOR_USER_IDS: ${TRAVEL_MODERATOR_USER_IDS:-}
       TRAVEL_ADMIN_USER_IDS: ${TRAVEL_ADMIN_USER_IDS:-}
       # API Keys
