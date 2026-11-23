@@ -140,6 +140,9 @@ logging:
 
 # 生产监控入口只建议通过内网网关访问。
 management:
+  health:
+    mail:
+      enabled: false
   endpoints:
     web:
       exposure:

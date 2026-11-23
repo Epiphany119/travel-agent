@@ -7,6 +7,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.mail.MailException;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.mail.javamail.JavaMailSenderImpl;
 import org.springframework.stereotype.Service;
 
 import java.security.SecureRandom;
@@ -16,7 +17,8 @@ import java.time.Duration;
  * 邮箱验证码服务
  *
  * <p>通过 Redis 存储验证码（5 分钟有效期 + 60 秒发送冷却），
- * 使用 {@link JavaMailSender} 发送邮件至任意邮箱地址。</p>
+ * 运行时优先使用原生 JDK 17 {@link DirectSmtpsClient} 直连 QQ SMTPS (465) 发信，
+ * 绕开 jakarta.mail SocketFetcher 的 TLS 握手超时问题。</p>
  */
 @Slf4j
 @Service
@@ -24,14 +26,37 @@ public class EmailVerificationService {
 
     private final StringRedisTemplate redis;
     private final JavaMailSender mailSender;
+    private final DirectSmtpsClient directSmtpsClient;
+    private final String sender;
     private final SecureRandom random = new SecureRandom();
 
-    @Value("${spring.mail.username:}")
-    private String sender;
-
-    public EmailVerificationService(StringRedisTemplate redis, JavaMailSender mailSender) {
+    public EmailVerificationService(
+            StringRedisTemplate redis,
+            JavaMailSender mailSender,
+            @Value("${spring.mail.username:}") String sender) {
         this.redis = redis;
         this.mailSender = mailSender;
+        this.sender = sender;
+        this.directSmtpsClient = buildDirectClient(mailSender, sender);
+    }
+
+    private DirectSmtpsClient buildDirectClient(JavaMailSender source, String senderEmail) {
+        if (!(source instanceof JavaMailSenderImpl impl)) {
+            return null;
+        }
+        String user = (impl.getUsername() != null && !impl.getUsername().isBlank())
+                ? impl.getUsername()
+                : senderEmail;
+        String pass = impl.getPassword();
+        if (user == null || user.isBlank() || pass == null || pass.isBlank()) {
+            return null;
+        }
+        String host = (impl.getHost() != null && !impl.getHost().isBlank())
+                ? impl.getHost()
+                : "smtp.qq.com";
+        int port = impl.getPort() > 0 ? impl.getPort() : 465;
+        log.info("[DirectSMTPS] enabled native JDK17 SMTPS client for {}:{}", host, port);
+        return new DirectSmtpsClient(host, port, user.trim(), pass.trim());
     }
 
     /**
@@ -64,15 +89,21 @@ public class EmailVerificationService {
         redis.opsForValue().set(cooldownKey, "1", Duration.ofSeconds(60));
 
         // 5. 构建并发送邮件
-        SimpleMailMessage message = new SimpleMailMessage();
-        message.setFrom(sender);
-        message.setTo(email);
-        message.setSubject("Roamly 邮箱验证码");
-        message.setText("您的验证码是：" + code + "，5 分钟内有效。请勿泄露给他人。");
+        String subject = "Roamly 邮箱验证码";
+        String body = "您的验证码是：" + code + "，5 分钟内有效。请勿泄露给他人。";
 
         try {
             log.info("发送验证码邮件: to={}, from={}", email, sender);
-            mailSender.send(message);
+            if (directSmtpsClient != null) {
+                directSmtpsClient.sendTextMail(sender.trim(), email.trim(), subject, body);
+            } else {
+                SimpleMailMessage message = new SimpleMailMessage();
+                message.setFrom(sender);
+                message.setTo(email);
+                message.setSubject(subject);
+                message.setText(body);
+                mailSender.send(message);
+            }
             log.info("验证码邮件发送成功: to={}", email);
         } catch (MailException e) {
             // 发送失败时清理 Redis，避免僵尸验证码

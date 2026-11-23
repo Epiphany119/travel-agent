@@ -16,7 +16,21 @@ instance.interceptors.request.use((config) => {
 
 // 响应拦截器：统一处理业务错误
 instance.interceptors.response.use(
-  (response) => response.data,
+  (response) => {
+    const payload = response.data
+    if (
+      payload &&
+      typeof payload === 'object' &&
+      typeof payload.code === 'number' &&
+      payload.code !== 200
+    ) {
+      const err: any = new Error(payload.message || '请求失败')
+      err.code = payload.code
+      err.response = response
+      return Promise.reject(err)
+    }
+    return payload
+  },
   (error) => {
     // 401 未授权 → 清除 token 并跳转登录页
     if (error?.response?.status === 401) {
