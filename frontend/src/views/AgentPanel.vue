@@ -25,6 +25,11 @@ function submit() {
   agent.send()
 }
 
+// 计划生成后默认收起左侧对话，把空间留给计划；用户可手动展开。
+// 用组件本地状态：KeepAlive 会保留它，重新规划时随 done 变化自动展开。
+const chatCollapsed = ref(agent.done)
+watch(() => agent.done, (done) => { chatCollapsed.value = done })
+
 // ── layout mode 自感知 ───────────────────────────────────────
 // 两栏（右栏关）: 中间路由 -> split 左右分栏
 // 三栏中间（右栏开但 viewKey !== agent）: 中间 /agent-panel -> results-only
@@ -114,16 +119,24 @@ onUnmounted(() => {
           <h1>Agent 规划</h1>
           <p class="sub">流式问答 · 实时整合天气与景点数据 · 逐步生成计划</p>
         </div>
-        <div class="status">
-          <span class="dot" :class="{ on: !agent.done }"></span>
-          {{ agent.done ? '已生成' : agent.sending ? '生成中' : agent.loading ? '启动中' : '就绪' }}
+        <div class="head-actions">
+          <template v-if="agent.done">
+            <button class="head-btn" @click="agent.startQuestionnaire()">重新规划</button>
+            <button class="head-btn primary" @click="chatCollapsed = !chatCollapsed">
+              {{ chatCollapsed ? '展开对话' : '收起对话' }}
+            </button>
+          </template>
+          <div class="status">
+            <span class="dot" :class="{ on: !agent.done }"></span>
+            {{ agent.done ? '已生成' : agent.sending ? '生成中' : agent.loading ? '启动中' : '就绪' }}
+          </div>
         </div>
       </section>
 
       <!-- 左右分栏主体 -->
       <div class="split-body">
-        <!-- 左栏：对话 + 输入 -->
-        <section class="chat-pane">
+        <!-- 左栏：对话 + 输入（计划生成后默认收起） -->
+        <section v-show="!chatCollapsed" class="chat-pane">
           <div class="chat-card">
             <div ref="scrollBox" class="log">
               <div v-for="(m, i) in agent.messages" :key="i" class="msg" :class="m.role">
@@ -181,7 +194,7 @@ onUnmounted(() => {
         </section>
 
         <!-- 分隔竖线 -->
-        <div class="split-divider"></div>
+        <div v-show="!chatCollapsed" class="split-divider"></div>
 
         <!-- 右栏：结果展示 -->
         <section class="plan-pane">
@@ -279,12 +292,12 @@ onUnmounted(() => {
 .agent-page {
   /* fill the workspace route-view (which has height 100%) */
   width: 100%;
-  max-width: 1240px;
+  max-width: 1600px;
   margin: 0 auto;
-  padding: 16px 24px 20px;
+  padding: 8px 16px 12px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 8px;
   height: 100%;
   min-height: 0;                  /* ★ critical flex child height constraint */
   overflow: hidden;               /* page itself never scrolls */
@@ -299,12 +312,21 @@ onUnmounted(() => {
 
   &.slim { margin-bottom: 0; }
 }
-.eyebrow { color: var(--sunset); font-size: 10px; font-weight: 800; letter-spacing: 0.18em; margin: 0 0 8px; }
-.page-head h1 { font: 32px "DM Serif Display", "Noto Sans SC"; color: var(--ink); margin: 0; }
-.sub { color: var(--ink-2); font-size: 13px; margin: 8px 0 0; }
+.eyebrow { color: var(--sunset); font-size: 9px; font-weight: 800; letter-spacing: 0.18em; margin: 0 0 3px; }
+.page-head h1 { font: 22px "DM Serif Display", "Noto Sans SC"; color: var(--ink); margin: 0; }
+.sub { color: var(--ink-2); font-size: 11px; margin: 3px 0 0; }
+.head-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.head-btn {
+  border: 1px solid var(--line); background: var(--card); color: var(--ink-2);
+  padding: 5px 10px; border-radius: 20px; font-size: 10px; font-weight: 700;
+  cursor: pointer; white-space: nowrap; transition: background .15s, color .15s;
+}
+.head-btn:hover { background: var(--roam-soft); color: var(--forest); }
+.head-btn.primary { border-color: var(--forest); background: var(--forest); color: #fff; }
+.head-btn.primary:hover { background: var(--forest-deep); color: #fff; }
 .status {
-  display: inline-flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700;
-  color: #587368; border: 1px solid var(--line); padding: 7px 14px; border-radius: 24px;
+  display: inline-flex; align-items: center; gap: 6px; font-size: 10px; font-weight: 700;
+  color: #587368; border: 1px solid var(--line); padding: 5px 10px; border-radius: 24px;
   background: var(--card); flex-shrink: 0;
 }
 .status .dot { width: 8px; height: 8px; border-radius: 50%; background: #b9c4be; }
@@ -312,7 +334,7 @@ onUnmounted(() => {
 
 /* ── split 模式：左右分栏 ───────────────────────────────────── */
 .mode-split .agent-page, &.mode-split { }  // no-op
-.agent-page.mode-split { max-width: 1240px; }
+.agent-page.mode-split { max-width: 1600px; }
 
 .split-body {
   flex: 1 1 auto;        /* ★ fill remaining height of .agent-page */
@@ -320,13 +342,13 @@ onUnmounted(() => {
   display: flex;
   flex-direction: row;
   align-items: stretch;  /* ★ 左右两栏都拉高到一致高度 */
-  gap: 20px;
+  gap: 12px;
   overflow: hidden;
 }
 .chat-pane {
-  flex: 0 0 46%;
-  min-width: 360px;
-  max-width: 520px;
+  flex: 0 0 32%;
+  min-width: 280px;
+  max-width: 420px;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -352,7 +374,7 @@ onUnmounted(() => {
   width: 1px;
   background: var(--line);
   flex-shrink: 0;
-  margin: 8px 0;
+  margin: 4px 0;
 }
 
 /* ── chat-only 模式：右栏窄适配 ─────────────────────────────── */
@@ -380,13 +402,13 @@ onUnmounted(() => {
 
 /* ── results-only 模式：顶部页头紧凑一些 ───────────────────── */
 .mode-results-only {
-  max-width: 1100px;
+  max-width: 1600px;
   height: 100%;
   overflow: hidden;              /* 外层锁死，不滚 */
   display: flex;
   flex-direction: column;
 }
-.mode-results-only .page-head.slim h1 { font-size: 28px; }
+.mode-results-only .page-head.slim h1 { font-size: 20px; }
 /* ★ plan-scroll：results-only 模式唯一滚容器 */
 .mode-results-only .plan-scroll {
   flex: 1 1 auto;

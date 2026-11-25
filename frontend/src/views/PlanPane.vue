@@ -1,11 +1,14 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import { useAgentSessionStore } from '@/stores/agentSession'
 import { addInspiration, getCurrentUserId } from '@/api/user'
-import { ref } from 'vue'
+import { fetchItineraryWeather } from '@/api/weather'
 import { formatCost } from '@/utils/planValues'
 const agent = useAgentSessionStore()
+
 const savingInspiration = ref(false)
 const savedInspiration = ref(false)
+const weatherLoading = ref(false)
 
 async function savePlanAsInspiration() {
   if (!agent.plan || savingInspiration.value) return
@@ -22,11 +25,27 @@ async function savePlanAsInspiration() {
       // agent.plan.budget 是用户输入的预算上限，不是系统核验出的预计花费。
       estimatedBudget: agent.verifiedPlanCost,
       status: 0,
-      priority: 1
+      priority: 1,
     })
     savedInspiration.value = true
   } catch { /* 页面主流程不因收藏失败中断 */ }
   finally { savingInspiration.value = false }
+}
+
+async function refreshWeather() {
+  if (!agent.plan || weatherLoading.value) return
+  weatherLoading.value = true
+  try {
+    const startDate = agent.plan.dayPlans?.find((d: any) => d?.date)?.date
+    const weather = await fetchItineraryWeather(
+      agent.plan.destination,
+      startDate,
+      Math.max(agent.plan.dayPlans?.length || 3, 3),
+    )
+    if (weather) agent.plan.weather = weather
+  } finally {
+    weatherLoading.value = false
+  }
 }
 </script>
 
@@ -38,14 +57,19 @@ async function savePlanAsInspiration() {
         <p v-if="agent.plan.budget">预算上限 ¥{{ agent.plan.budget?.toLocaleString() }}</p>
         <p>{{ agent.verifiedPlanCost == null ? '预计费用：待确认' : `已核验费用下限：${formatCost(agent.verifiedPlanCost)}` }}</p>
       </div>
-      <button class="inspiration-btn" :disabled="savingInspiration || savedInspiration" @click="savePlanAsInspiration">
-        {{ savingInspiration ? '保存中…' : savedInspiration ? '已存入灵感' : '✦ 存到灵感目的地' }}
-      </button>
-      <div v-if="agent.globalWeather" class="weather-badge">
-        <span class="weather-icon">{{ agent.globalWeather.icon || '☀️' }}</span>
-        <div>
-          <b>{{ agent.globalWeather.text || '天气' }}</b>
-          <span>{{ agent.globalWeather.tempMin ?? '--' }} ~ {{ agent.globalWeather.tempMax ?? '--' }}℃</span>
+      <div class="head-right">
+        <button type="button" class="inspiration-btn" :disabled="savingInspiration || savedInspiration" @click="savePlanAsInspiration">
+          {{ savingInspiration ? '保存中…' : savedInspiration ? '已存入灵感' : '✦ 存到灵感目的地' }}
+        </button>
+        <button v-if="!agent.globalWeather" type="button" class="weather-refresh" :disabled="weatherLoading" @click="refreshWeather">
+          {{ weatherLoading ? '查询中…' : '查天气' }}
+        </button>
+        <div v-if="agent.globalWeather" class="weather-badge">
+          <span class="weather-icon">{{ agent.globalWeather.icon || '☀️' }}</span>
+          <div>
+            <b>{{ agent.globalWeather.text || '天气' }}</b>
+            <span>{{ agent.globalWeather.tempMin ?? '--' }} ~ {{ agent.globalWeather.tempMax ?? '--' }}℃</span>
+          </div>
         </div>
       </div>
     </div>
@@ -60,14 +84,14 @@ async function savePlanAsInspiration() {
           @click="agent.activeDay = i"
         >
           <span class="tab-label">{{ tab.label }}</span>
-          <span v-if="tab.weather" class="tab-temp">{{ tab.weather.temp }}°</span>
+          <span v-if="tab.weather?.temp" class="tab-temp">{{ tab.weather.temp }}°</span>
         </button>
       </div>
       <div class="tab-content">
         <div v-if="agent.dayTabs[agent.activeDay]" class="day-detail">
           <div v-if="agent.dayTabs[agent.activeDay].weather" class="day-weather-row">
-            <div class="weather-chip"><span>{{ agent.dayTabs[agent.activeDay].weather.icon }}</span><span>{{ agent.dayTabs[agent.activeDay].weather.text }}</span></div>
-            <div class="weather-chip"><span>🌡️</span><span>{{ agent.dayTabs[agent.activeDay].weather.tempMin }} ~ {{ agent.dayTabs[agent.activeDay].weather.tempMax }}℃</span></div>
+            <div v-if="agent.dayTabs[agent.activeDay].weather.text" class="weather-chip"><span>{{ agent.dayTabs[agent.activeDay].weather.icon }}</span><span>{{ agent.dayTabs[agent.activeDay].weather.text }}</span></div>
+            <div v-if="agent.dayTabs[agent.activeDay].weather.tempMin != null || agent.dayTabs[agent.activeDay].weather.tempMax != null" class="weather-chip"><span>🌡️</span><span>{{ agent.dayTabs[agent.activeDay].weather.tempMin ?? '--' }} ~ {{ agent.dayTabs[agent.activeDay].weather.tempMax ?? '--' }}℃</span></div>
             <div v-if="agent.dayTabs[agent.activeDay].budget != null" class="weather-chip budget-chip"><span>💰</span><span>¥{{ agent.dayTabs[agent.activeDay].budget }}</span></div>
           </div>
           <div v-if="agent.currentActivities.length" class="activity-cards">
@@ -115,11 +139,22 @@ async function savePlanAsInspiration() {
   /* results-only 模式下由 AgentPanel 外部用 :deep() 覆盖成 overflow:auto */
 }
 .plan-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 18px; }
-.inspiration-btn { margin-left: auto; border: 1px solid var(--sunset); border-radius: 9px; padding: 8px 11px; background: var(--sunset-soft); color: var(--sunset); font-size: 11px; font-weight: 800; cursor: pointer; white-space: nowrap; transition: transform .15s, background .15s; }
-.inspiration-btn:hover:not(:disabled) { transform: translateY(-1px); background: color-mix(in srgb, var(--sunset) 18%, var(--paper)); }
-.inspiration-btn:disabled { opacity: .65; cursor: default; }
 .plan-head h2 { margin: 0; font-size: 20px; color: var(--ink); }
 .plan-head p { margin: 6px 0 0; color: #687873; font-size: 12px; }
+.head-right { display: flex; align-items: center; gap: 10px; margin-left: auto; flex-shrink: 0; }
+.inspiration-btn {
+  border: 1px solid #F27A4F; border-radius: 9px; padding: 8px 11px;
+  background: #FDEEE6; color: #C65B34; font-size: 11px; font-weight: 800;
+  cursor: pointer; white-space: nowrap; transition: transform .15s, background .15s;
+}
+.inspiration-btn:hover:not(:disabled) { transform: translateY(-1px); background: #fbe2d4; }
+.inspiration-btn:disabled { opacity: .65; cursor: default; }
+.weather-refresh {
+  border: 1px solid var(--line); border-radius: 9px; padding: 8px 11px;
+  background: var(--card); color: var(--forest); font-size: 11px; font-weight: 800;
+  cursor: pointer; white-space: nowrap;
+}
+.weather-refresh:disabled { opacity: .6; cursor: default; }
 .weather-badge { display: flex; align-items: center; gap: 10px; background: var(--roam-soft); padding: 10px 14px; border-radius: 14px; flex-shrink: 0; }
 .weather-badge .weather-icon { font-size: 28px; line-height: 1; }
 .weather-badge b { display: block; color: var(--forest); font-size: 15px; font-weight: 700; }

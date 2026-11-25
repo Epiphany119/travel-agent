@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { watchEffect } from 'vue'
 import { renderMarkdown as renderSafeMarkdown } from '@/utils/markdown'
 import { subscribeA2AStream, fetchPoiImages } from '@/api/agent'
+import { fetchItineraryWeather } from '@/api/weather'
 import { useStreamStore } from './stream'
 import { useRouter } from 'vue-router'
 import { useRightPanelStore } from './rightPanel'
@@ -21,6 +22,58 @@ const QUESTIONS: Array<{ field: string; prompt: string; options?: string[]; inpu
   { field: 'budget', prompt: '这次出行总预算大概是多少元？', inputType: 'number' },
 ]
 const TOTAL_STEPS = QUESTIONS.length
+
+/** 天气文案 -> 图标 */
+function weatherIcon(text = ''): string {
+  if (/雷|thunder|storm/i.test(text)) return '⛈️'
+  if (/雪|snow/i.test(text)) return '❄️'
+  if (/雨|rain|drizzle|shower/i.test(text)) return '🌧️'
+  if (/雾|霾|fog|mist|haze/i.test(text)) return '🌫️'
+  if (/云|阴|cloud|overcast/i.test(text)) return '☁️'
+  if (/晴|sunny|clear/i.test(text)) return '☀️'
+  return '🌤️'
+}
+
+/**
+ * 后端 WeatherResult -> UI 可直接渲染的结构。
+ * 后端是 { city, success, data: { forecast: [{ date, text, tempMin, tempMax }] } }，
+ * 之前原样塞进 plan.weather，UI 找不到 icon/text/tempMin，才显示成「天气 -- ~ --℃」。
+ */
+function normalizeWeather(raw: any) {
+  if (!raw || typeof raw !== 'object') return null
+  const data = raw.data && typeof raw.data === 'object' ? raw.data : raw
+  const list = Array.isArray(data.forecast)
+    ? data.forecast
+    : Array.isArray(data.weather)
+      ? data.weather
+      : Array.isArray(data)
+        ? data
+        : []
+  const forecast = list.map((d: any) => {
+    const text = String(d?.text ?? d?.weatherDesc ?? '')
+    const tempMin = d?.tempMin ?? d?.min ?? null
+    const tempMax = d?.tempMax ?? d?.max ?? null
+    return {
+      date: d?.date || '',
+      text,
+      icon: weatherIcon(text),
+      tempMin,
+      tempMax,
+      temp: tempMax ?? d?.temp ?? null,
+    }
+  })
+  if (!forecast.length && raw.success === false) return null
+  const first = forecast[0]
+  return {
+    city: data.city || raw.city || '',
+    success: raw.success !== false && data.success !== false,
+    icon: first?.icon || '☀️',
+    text: first?.text || '',
+    tempMin: first?.tempMin ?? null,
+    tempMax: first?.tempMax ?? null,
+    forecast,
+  }
+}
 
 export const useAgentSessionStore = defineStore('agentSession', () => {
   // ── 会话状态（两个宿主实例共享） ──────────────────────────────
@@ -58,10 +111,25 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
       sum + (normalizeOptionalCost(activity?.cost) ?? 0), 0)
   })
 
+  /** 按行程第几天取对应天气预报；没查到天气就不显示，不编造 */
+  function resolveDayWeather(index: number, day: any) {
+    const forecast = plan.value?.weather?.forecast || []
+    const f = forecast[index]
+    const text = f?.text || (typeof day?.weather === 'string' ? day.weather : '')
+    if (!text && f?.tempMin == null && f?.tempMax == null) return null
+    return {
+      icon: f?.icon || weatherIcon(text),
+      text,
+      temp: f?.temp ?? f?.tempMax ?? '',
+      tempMin: f?.tempMin ?? null,
+      tempMax: f?.tempMax ?? null,
+    }
+  }
+
   const dayTabs = computed(() => {
     if (!plan.value) return []
     if (plan.value.dayPlans && plan.value.dayPlans.length) {
-      return plan.value.dayPlans.map((d: any) => {
+      return plan.value.dayPlans.map((d: any, index: number) => {
         const activities = d.activities || []
         const withTime = (a: any) => a.time
         const morning = activities.filter((a: any) => withTime(a) && a.time < '12:00')
@@ -87,14 +155,14 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
           label: `Day ${d.day || 1}`,
           subLabel: d.date || '',
           html: renderSafeMarkdown(md),
-          weather: null,
+          weather: resolveDayWeather(index, d),
           budget: d.dailyBudget || null,
         }
       })
     }
     const days = plan.value.days || 1
     return Array.from({ length: days }, (_, i) => ({
-      label: `Day ${i + 1}`, subLabel: '', html: '', weather: null, budget: null,
+      label: `Day ${i + 1}`, subLabel: '', html: '', weather: resolveDayWeather(i, {}), budget: null,
     }))
   })
 
@@ -145,9 +213,9 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
 
   const globalWeather = computed(() => {
     if (!plan.value) return null
-    if (plan.value.weather) return plan.value.weather
-    if (plan.value.dayPlans?.[0]?.weather) return plan.value.dayPlans[0].weather
-    return null
+    const w = plan.value.weather
+    if (!w || w.success === false || !w.forecast?.length) return null
+    return w
   })
 
   // ── 方法 ────────────────────────────────────────────────────────
@@ -239,6 +307,20 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
     }).join('\n\n')
   }
 
+  /** 用免费的 Open-Meteo 补查行程天气；后端天气工具失败时也能显示 */
+  async function refreshWeather() {
+    if (!plan.value) return false
+    const startDate = plan.value.dayPlans?.find((d: any) => d?.date)?.date
+    const weather = await fetchItineraryWeather(
+      plan.value.destination,
+      startDate,
+      Math.max(plan.value.dayPlans?.length || 3, 3),
+    )
+    if (!weather) return false
+    plan.value = { ...plan.value, weather }
+    return true
+  }
+
   function runA2APlan() {
     const dest = answers.value['destination'] || '未知'
     const days = parseInt(answers.value['days'] || '3')
@@ -276,11 +358,12 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
             const normalizedDayPlans = Array.from({ length: Math.max(days, rawDayPlans.length, 1) }, (_, index) => normalizeDayPlan(rawDayPlans[index] || {}, index))
             const overview = String(result.finalPlan || result.overview || '').trim() || fallbackOverview(normalizedDayPlans)
 
+            const weather = normalizeWeather(result.weather)
             plan.value = {
               destination: result.destination || dest,
               days: normalizedDayPlans.length,
               budget,
-              weather: result.weather || null,
+              weather,
               overview,
               dayPlans: normalizedDayPlans,
             }
@@ -289,6 +372,8 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
             push({ role: 'info', content: '🎉 旅行计划已生成：' })
             activeDay.value = 0
             void loadActivityImages()
+            // 后端天气工具失败/无数据时，用免费 Open-Meteo 按行程日期补查
+            if (!weather?.forecast?.length) void refreshWeather()
             _fireOnDone()         // ★ 通知 UI 自动路由
             break
           }
@@ -353,7 +438,7 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
     currentQuestion, optionChips,
     currentActivities, verifiedPlanCost, dayTabs, overview, dayOverview, globalWeather,
     // methods
-    startQuestionnaire, reset, selectOption, send,
+    startQuestionnaire, reset, selectOption, send, refreshWeather,
     push, greet, renderMarkdown,
     loadActivityImages,
     dropImage,
