@@ -11,15 +11,14 @@ import { normalizeOptionalCost } from '@/utils/planValues'
 export interface ChatMsg {
   role: 'agent' | 'user' | 'tool' | 'info'
   content: string
-  meta?: string
 }
 
-const QUESTIONS: Array<{ field: string; prompt: string; options?: string[] }> = [
+const QUESTIONS: Array<{ field: string; prompt: string; options?: string[]; inputType?: string }> = [
   { field: 'destination', prompt: '你想去哪里旅行？比如：杭州、成都、上海…' },
   { field: 'madeAt', prompt: '这次你更想要什么旅行节奏？', options: ['轻松漫游', '紧凑高效', '慢节奏深度'] },
   { field: 'days', prompt: '打算玩几天？', options: ['1', '2', '3', '4', '5'] },
   { field: 'interests', prompt: '对什么主题感兴趣？比如：美食、人文、自然、摄影、购物…（可多个，逗号分隔）' },
-  { field: 'budget', prompt: '这次出行总预算大概是多少元？' },
+  { field: 'budget', prompt: '这次出行总预算大概是多少元？', inputType: 'number' },
 ]
 const TOTAL_STEPS = QUESTIONS.length
 
@@ -43,7 +42,6 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
 
   // ── 计算属性（可被右栏 / 中间分别消费） ──────────────────────
   const currentQuestion = computed(() => QUESTIONS[stepIndex.value])
-  const meta = computed(() => `Q${stepIndex.value + 1} / ${TOTAL_STEPS}`)
   const optionChips = computed(() => currentQuestion.value?.options || [])
 
   const currentActivities = computed(
@@ -174,7 +172,7 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
     imageMap.value = {}
     activeDay.value = 0
     greet()
-    push({ role: 'agent', content: currentQuestion.value.prompt, meta: meta.value })
+    push({ role: 'agent', content: currentQuestion.value.prompt })
   }
 
   function startQuestionnaire() { reset() }
@@ -182,7 +180,8 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
   function selectOption(opt: string) { input.value = opt; send() }
 
   function send() {
-    const text = input.value.trim()
+    // type="number" 的 v-model 会被 Vue 转成 number，统一成字符串再处理
+    const text = String(input.value ?? '').trim()
     if (!text || sending.value) return
     sending.value = true
     push({ role: 'user', content: text })
@@ -192,7 +191,7 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
     stepIndex.value++
     if (stepIndex.value < TOTAL_STEPS) {
       sending.value = false
-      push({ role: 'agent', content: currentQuestion.value.prompt, meta: meta.value })
+      push({ role: 'agent', content: currentQuestion.value.prompt })
     } else {
       push({ role: 'tool', content: '🔧 正在获取天气与景点数据，整合编排中…' })
       runA2APlan()
@@ -351,7 +350,7 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
     loading, sending, input, messages, done, plan, activeDay, imageMap,
     stepIndex, answers,
     // computed
-    currentQuestion, meta, optionChips,
+    currentQuestion, optionChips,
     currentActivities, verifiedPlanCost, dayTabs, overview, dayOverview, globalWeather,
     // methods
     startQuestionnaire, reset, selectOption, send,

@@ -13,6 +13,18 @@ const router = useRouter()
 const rightPanel = useRightPanelStore()
 const agent = useAgentSessionStore()
 
+// 预算这一步：直接在问题气泡里给数字输入框，用户只能输数字
+// 用 field 判断，避免开发热更新后 store 里旧问题对象没有 inputType 导致输入框不出现
+const askingNumber = computed(() =>
+  !agent.done && (agent.currentQuestion?.field === 'budget' || agent.currentQuestion?.inputType === 'number')
+)
+
+// 数字输入框的 v-model 会得到 number，先转回字符串再交给 store 的 send()
+function submit() {
+  if (typeof agent.input === 'number') agent.input = String(agent.input)
+  agent.send()
+}
+
 // ── layout mode 自感知 ───────────────────────────────────────
 // 两栏（右栏关）: 中间路由 -> split 左右分栏
 // 三栏中间（右栏开但 viewKey !== agent）: 中间 /agent-panel -> results-only
@@ -115,8 +127,21 @@ onUnmounted(() => {
           <div class="chat-card">
             <div ref="scrollBox" class="log">
               <div v-for="(m, i) in agent.messages" :key="i" class="msg" :class="m.role">
-                <span v-if="m.meta" class="meta">{{ m.meta }}</span>
                 <p>{{ m.content }}</p>
+                <div v-if="askingNumber && m.role === 'agent' && i === agent.messages.length - 1" class="inline-num">
+                  <input
+                    type="number"
+                    min="300"
+                    max="200000"
+                    step="100"
+                    v-model="agent.input"
+                    :disabled="agent.sending"
+                    placeholder="输入预算数字（元）"
+                    @keyup.enter="submit"
+                  />
+                  <span class="unit">元</span>
+                  <button class="confirm" :disabled="agent.sending || !agent.input" @click="submit">确定</button>
+                </div>
               </div>
               <div v-if="agent.sending && !agent.done" class="typing"><span></span><span></span><span></span></div>
             </div>
@@ -131,22 +156,22 @@ onUnmounted(() => {
             </div>
 
             <footer v-if="!agent.done" class="composer">
-              <div class="row">
+              <div class="row" v-if="!askingNumber">
                 <input
                   ref="inputBox"
                   v-model="agent.input"
                   :disabled="agent.sending"
                   placeholder="Write a message… 输入你的回答"
-                  @keyup.enter="agent.send"
+                  @keyup.enter="submit"
                 />
-                <button class="send" :disabled="agent.sending" @click="agent.send" title="发送">
+                <button class="send" :disabled="agent.sending" @click="submit" title="发送">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <line x1="22" y1="2" x2="11" y2="13" />
                     <polygon points="22 2 15 22 11 13 2 9 22 2" />
                   </svg>
                 </button>
-                <button class="ghost" :disabled="agent.loading || agent.sending" @click="agent.startQuestionnaire">重新开始</button>
               </div>
+              <button class="ghost" :disabled="agent.loading || agent.sending" @click="agent.startQuestionnaire">重新开始</button>
             </footer>
 
             <footer v-else class="composer done-footer">
@@ -204,8 +229,21 @@ onUnmounted(() => {
       <div class="chat-only-body">
         <div ref="scrollBox" class="log">
           <div v-for="(m, i) in agent.messages" :key="i" class="msg" :class="m.role">
-            <span v-if="m.meta" class="meta">{{ m.meta }}</span>
             <p>{{ m.content }}</p>
+            <div v-if="askingNumber && m.role === 'agent' && i === agent.messages.length - 1" class="inline-num">
+              <input
+                type="number"
+                min="300"
+                max="200000"
+                step="100"
+                v-model="agent.input"
+                :disabled="agent.sending"
+                placeholder="输入预算数字（元）"
+                @keyup.enter="submit"
+              />
+              <span class="unit">元</span>
+              <button class="confirm" :disabled="agent.sending || !agent.input" @click="submit">确定</button>
+            </div>
           </div>
           <div v-if="agent.sending && !agent.done" class="typing"><span></span><span></span><span></span></div>
         </div>
@@ -215,9 +253,9 @@ onUnmounted(() => {
         </div>
 
         <footer v-if="!agent.done" class="composer">
-          <div class="row">
-            <input ref="inputBox" v-model="agent.input" :disabled="agent.sending" placeholder="输入回答…" @keyup.enter="agent.send" />
-            <button class="send" :disabled="agent.sending" @click="agent.send" title="发送">
+          <div class="row" v-if="!askingNumber">
+            <input ref="inputBox" v-model="agent.input" :disabled="agent.sending" placeholder="输入回答…" @keyup.enter="submit" />
+            <button class="send" :disabled="agent.sending" @click="submit" title="发送">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <line x1="22" y1="2" x2="11" y2="13" />
                 <polygon points="22 2 15 22 11 13 2 9 22 2" />
@@ -401,11 +439,23 @@ onUnmounted(() => {
   font-size: 13px;
 }
 .msg p { margin: 0; white-space: pre-wrap; word-break: break-word; }
-.msg .meta { display: block; font-size: 10px; font-weight: 700; letter-spacing: 0.06em; color: #b08968; margin-bottom: 4px; }
 .msg.agent { align-self: flex-start; background: var(--wash); border: 1px solid var(--line); border-top-left-radius: 6px; color: var(--ink); }
 .msg.user { align-self: flex-end; background: var(--forest); color: var(--card); border-top-right-radius: 6px; }
 .msg.tool { align-self: flex-start; background: var(--roam-soft); border: 1px dashed var(--line); color: var(--ink-2); font-size: 12px; }
 .msg.info { align-self: center; background: transparent; border: 0; color: #8a9792; font-size: 12px; text-align: center; max-width: 90%; }
+.inline-num { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.inline-num input {
+  width: 150px; min-width: 0; padding: 8px 10px; font-size: 13px;
+  border: 1px solid var(--forest); border-radius: 8px; background: var(--card); color: var(--ink);
+  outline: none;
+}
+.inline-num input:focus { box-shadow: 0 0 0 3px var(--roam-soft); }
+.inline-num .unit { font-size: 12px; color: var(--ink-2); }
+.inline-num .confirm {
+  border: 0; background: var(--forest); color: #fff; cursor: pointer;
+  padding: 8px 16px; border-radius: 8px; font-size: 12px; font-weight: 700;
+}
+.inline-num .confirm:disabled { opacity: 0.5; cursor: default; }
 .typing { display: flex; gap: 5px; padding: 6px 2px; align-self: flex-start; }
 .typing span { width: 7px; height: 7px; border-radius: 50%; background: var(--roam); animation: blink 1s infinite; }
 .typing span:nth-child(2) { animation-delay: .2s; }
