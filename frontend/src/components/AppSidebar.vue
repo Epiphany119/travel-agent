@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useRightPanelStore } from '@/stores/rightPanel'
 import { useUserStore } from '@/stores/user'
@@ -9,6 +9,15 @@ const router = useRouter()
 const route = useRoute()
 const rightPanel = useRightPanelStore()
 const userStore = useUserStore()
+
+const collapsed = ref(localStorage.getItem('roamly-sidebar-collapsed') === '1')
+watch(collapsed, (val) => {
+  localStorage.setItem('roamly-sidebar-collapsed', val ? '1' : '0')
+})
+
+function toggleSidebar() {
+  collapsed.value = !collapsed.value
+}
 
 interface NavItem {
   path: string
@@ -24,12 +33,13 @@ const icons: Record<string, string> = {
   map: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="1 6 8 3 16 6 23 3 23 18 16 21 8 18 1 21 1 6"/><line x1="8" y1="3" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="21"/></svg>`,
   flag: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>`,
   chat: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`,
-  note: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`
+  note: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`,
+  plus: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`
 }
 
 const navMain: NavItem[] = [
-  { path: '/explore', label: '发现灵感', icon: 'compass', description: '浏览全球旅行灵感，发现新目的地与热门路线。' },
   { path: '/chat', label: 'Agent 旅行规划', icon: 'chat', description: '用表单或对话 Agent 规划个性化旅行行程。' },
+  { path: '/explore', label: '发现灵感', icon: 'compass', description: '浏览全球旅行灵感，发现新目的地与热门路线。' },
   { path: '/inspirations', label: '灵感目的地', icon: 'star', description: '收藏与管理你心仪的旅行目的地卡片。' },
   { path: '/notes', label: '旅行笔记', icon: 'note', description: '类飞书的 Markdown 在线笔记编辑器，支持导入、预览与主题定制。' },
   { path: '/journeys', label: '我的旅程', icon: 'map', description: '查看和管理你创建的旅行行程记录。' }
@@ -44,18 +54,8 @@ function isActive(item: NavItem) {
   return route.path.startsWith(item.path)
 }
 
-/**
- * 页面优先级：
- *  高优先级（中间工作区）：旅行笔记 /notes、个人信息 /profile、卡片预览 /card-detail
- *  低优先级（三栏时进右侧辅助面板）：发现灵感、灵感目的地、我的旅程、足迹地图、AI 规划等
- * 规则：
- *  - 右侧栏收起时：所有入口都在中间工作区自由切换路由
- *  - 右侧栏打开时：高优先级留在中间切路由；低优先级在右侧辅助面板显示，
- *    绝不让中间和右侧显示同一份内容
- */
 const primaryNav = new Set(['/notes', '/profile'])
 
-/** 侧边栏入口 -> 右侧辅助面板视图 key 映射 */
 const viewKeyMap: Record<string, string> = {
   '/explore': 'explore',
   '/chat': 'planner',
@@ -73,11 +73,9 @@ function navigate(item: NavItem) {
   const viewKey = viewKeyMap[path]
 
   if (rightPanel.show && !primaryNav.has(item.path) && viewKey) {
-    // 三栏模式 + 低优先级 -> 右侧辅助面板（中间保持笔记/预览）
     rightPanel.openView(viewKey, item.label)
     return
   }
-  // 高优先级或右栏收起 -> 中间工作区切路由
   router.push(path)
 }
 
@@ -92,43 +90,68 @@ const avatarFallback = computed(() => (userStore.nickname || '旅人').charAt(0)
 </script>
 
 <template>
-  <aside class="sidebar">
-    <a class="brand" @click="router.push('/')">
-      <img class="brand-mark" :src="roamlySymbol" alt="Roamly" />
-      <span class="brand-name">Roamly</span>
-    </a>
-
-    <p class="group-label">菜单</p>
-    <nav class="menu">
-      <a
-        v-for="item in navMain"
-        :key="item.path"
-        class="menu-item"
-        :class="{ active: isActive(item) }"
-        @click="navigate(item)"
-      >
-        <span class="ico" :aria-label="item.label" v-html="icons[item.icon]"></span>
-        <span class="label">{{ item.label }}</span>
+  <aside class="sidebar" :class="{ collapsed }">
+    <div class="sidebar-top">
+      <a class="brand" @click="router.push('/')">
+        <img class="brand-mark" :src="roamlySymbol" alt="Roamly" />
+        <span class="brand-name">Roamly</span>
       </a>
-    </nav>
-
-    <p class="group-label">更多</p>
-    <nav class="menu">
-      <a
-        v-for="item in navMore"
-        :key="item.path"
-        class="menu-item"
-        :class="{ active: isActive(item) }"
-        @click="navigate(item)"
+      <button
+        type="button"
+        class="collapse-toggle"
+        :title="collapsed ? '展开侧边栏' : '收起侧边栏'"
+        @click="toggleSidebar"
       >
-        <span class="ico" :aria-label="item.label" v-html="icons[item.icon]"></span>
-        <span class="label">{{ item.label }}</span>
-      </a>
-    </nav>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="4" width="18" height="16" rx="3" />
+          <line x1="9" y1="4" x2="9" y2="20" />
+        </svg>
+      </button>
+    </div>
+
+    <div class="sidebar-scroll">
+      <nav class="menu">
+        <a
+          v-for="item in navMain"
+          :key="item.path"
+          class="menu-item"
+          :class="{ active: isActive(item) }"
+          :title="collapsed ? item.label : undefined"
+          @click="navigate(item)"
+        >
+          <span class="ico" :aria-label="item.label" v-html="icons[item.icon]"></span>
+          <span class="label">{{ item.label }}</span>
+        </a>
+      </nav>
+
+      <div class="section-block">
+        <p class="group-label">探索与记录</p>
+        <nav class="menu">
+          <a
+            v-for="item in navMore"
+            :key="item.path"
+            class="menu-item"
+            :class="{ active: isActive(item) }"
+            :title="collapsed ? item.label : undefined"
+            @click="navigate(item)"
+          >
+            <span class="ico" :aria-label="item.label" v-html="icons[item.icon]"></span>
+            <span class="label">{{ item.label }}</span>
+          </a>
+          <a
+            class="menu-item quick-create"
+            :title="collapsed ? '新建旅程' : undefined"
+            @click="router.push('/journeys')"
+          >
+            <span class="ico" aria-label="新建旅程" v-html="icons.plus"></span>
+            <span class="label">新建旅程</span>
+          </a>
+        </nav>
+      </div>
+    </div>
 
     <div class="side-foot">
-      <!-- 用户卡片 -->
-      <a class="user" @click="router.push('/profile')">
+      <a class="user" :title="collapsed ? (userStore.nickname || '个人主页') : undefined" @click="router.push('/profile')">
         <span class="user-avatar" :style="avatarStyle">
           <span v-if="!userStore.avatar" class="fallback">{{ avatarFallback }}</span>
         </span>
@@ -136,9 +159,6 @@ const avatarFallback = computed(() => (userStore.nickname || '旅人').charAt(0)
           <b>{{ userStore.nickname || '旅人' }}</b>
           <small>个人主页</small>
         </span>
-        <svg class="goto" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M9 18l6-6-6-6" />
-        </svg>
       </a>
     </div>
   </aside>
@@ -146,180 +166,260 @@ const avatarFallback = computed(() => (userStore.nickname || '旅人').charAt(0)
 
 <style scoped lang="scss">
 .sidebar {
-  width: 56px;
+  width: 224px;
   flex-shrink: 0;
-  height: calc(100% - 16px);    /* 让父 flex 控制高度，减去顶部/底部 8px 外边距 */
-  margin: 8px 8px 8px 0;        /* 只留右边距，左边由 .app-main-row padding 8px 顶开 */
-  border-radius: 14px;
-  position: sticky;
+  height: calc(100vh - 20px);
+  margin: 10px 0 10px 10px;
+  border-radius: 18px;
+  position: relative;
   z-index: 10000;
-  top: 0;
   display: flex;
   flex-direction: column;
-  background:
-    radial-gradient(circle at 50% -6%, color-mix(in srgb, var(--sunset) 28%, transparent), transparent 9rem),
-    linear-gradient(180deg, var(--forest) 0%, var(--forest-deep) 100%);
-  padding: 14px 8px;
-  border: 1px solid rgba(255,255,255,.08);
-  box-shadow: 8px 0 24px color-mix(in srgb, var(--forest) 16%, transparent), inset -1px 0 rgba(255,255,255,.05);
+  background: #FFFFFF;
+  padding: 14px 10px 12px;
+  border: 1px solid #E2E7EE;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04), 0 6px 18px rgba(15, 23, 42, 0.03);
+  transition: width 0.22s cubic-bezier(.22, 1, .36, 1), padding 0.22s ease;
   overflow: visible;
+
+  &.collapsed {
+    width: 62px;
+    padding: 14px 8px 12px;
+
+    .sidebar-top {
+      flex-direction: column;
+      gap: 10px;
+      padding: 0 0 12px;
+    }
+
+    .brand-name,
+    .group-label,
+    .menu-item .label,
+    .user-meta {
+      display: none;
+    }
+
+    .menu-item {
+      justify-content: center;
+      padding: 0;
+      width: 44px;
+      height: 40px;
+      margin: 0 auto;
+    }
+
+    .section-block {
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid #EEF1F5;
+    }
+
+    .user {
+      justify-content: center;
+      padding: 4px;
+    }
+  }
+}
+
+.sidebar-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 6px 14px;
+  flex-shrink: 0;
 }
 
 .brand {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 0;
-  padding: 2px 0 22px;
-  border-bottom: 1px solid rgba(255,255,255,.09);
-  margin-bottom: 12px;
+  gap: 10px;
+  min-width: 0;
   cursor: pointer;
+  user-select: none;
 }
 
 .brand-mark {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
   display: block;
   flex-shrink: 0;
 }
 
 .brand-name {
-  display: none;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: #1F2329;
+  white-space: nowrap;
 }
 
-.group-label {
-  display: none;
+.collapse-toggle {
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #5F6368;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s ease, color 0.15s ease;
+
+  svg {
+    width: 17px;
+    height: 17px;
+  }
+
+  &:hover {
+    background: #F0F4F9;
+    color: #1F2329;
+  }
+}
+
+.sidebar-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 1px;
 }
 
 .menu {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin-bottom: 14px;
+  gap: 3px;
+}
+
+.section-block {
+  margin-top: 18px;
+}
+
+.group-label {
+  padding: 0 12px 7px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #8C959F;
+  letter-spacing: 0.02em;
+  user-select: none;
 }
 
 .menu-item {
   position: relative;
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 0;
-  width: 40px;
-  height: 40px;
-  padding: 0;
-  border-radius: 10px;
-  color: #A9C4B9;
-  font-size: 14px;
-  font-weight: 600;
+  gap: 12px;
+  height: 38px;
+  padding: 0 12px;
+  border-radius: 999px;
+  color: #3C4043;
+  font-size: 13.5px;
+  font-weight: 500;
   cursor: pointer;
   border: 1px solid transparent;
-  transition: background 0.2s, color 0.2s, border-color .2s, transform .2s;
-
-  &::before {
-    content: '';
-    position: absolute;
-    left: -8px;
-    width: 3px;
-    height: 18px;
-    border-radius: 0 3px 3px 0;
-    background: var(--sunset, #F27A4F);
-    opacity: 0;
-    transition: opacity .2s;
-  }
+  transition: background 0.15s ease, color 0.15s ease;
+  user-select: none;
 
   &:hover {
-    background: rgba(255, 255, 255, 0.07);
-    color: #FFFDF8;
-    border-color: rgba(255,255,255,.08);
-    transform: translateX(1px);
+    background: #F0F4F9;
+    color: #1F2329;
   }
 
   &.active {
-    background: linear-gradient(135deg, rgba(255,255,255,.18), rgba(255,255,255,.09));
-    color: #ffffff;
-    border-color: rgba(255,255,255,.12);
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 6px 14px rgba(0,0,0,.10);
+    background: #E8F0FE;
+    color: #0B57D0;
+    font-weight: 600;
+  }
 
-    &::before { opacity: 1; }
+  &.quick-create {
+    color: #5F6368;
+    &:hover {
+      color: #0B57D0;
+      background: #EDF3FE;
+    }
   }
 }
 
-.menu-item .label { display: none; }
-.ico { 
-  position: relative;
-  z-index: 2;
-}
-
-/* 全局 tooltip 样式 - 使用 fixed 定位，确保不被任何容器裁剪 */
-.ico::after {
-  content: attr(aria-label);
-  position: absolute;
-  left: calc(100% + 10px);
-  top: 50%;
-  transform: translateY(-50%);
+.menu-item .label {
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
-  z-index: 99999;
-  padding: 6px 10px;
-  border-radius: 6px;
-  background: #1f2329;
-  color: #ffffff;
-  font-size: 12px;
-  font-weight: 500;
-  box-shadow: 0 4px 16px rgba(0,0,0,.2);
-  pointer-events: none;
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity .15s ease, visibility .15s ease;
-}
-
-.menu-item:hover .ico::after,
-.ico:hover::after {
-  opacity: 1 !important;
-  visibility: visible !important;
 }
 
 .ico {
+  position: relative;
+  z-index: 2;
   width: 19px;
   height: 19px;
   display: grid;
   place-items: center;
   flex-shrink: 0;
 
-  :deep(svg) { width: 19px; height: 19px; }
+  :deep(svg) {
+    width: 18px;
+    height: 18px;
+  }
+}
+
+/* 仅在收起态显示右侧悬浮文字提示 */
+.sidebar.collapsed .ico::after {
+  content: attr(aria-label);
+  position: absolute;
+  left: calc(100% + 14px);
+  top: 50%;
+  transform: translateY(-50%);
+  white-space: nowrap;
+  z-index: 99999;
+  padding: 6px 11px;
+  border-radius: 8px;
+  background: #1F2329;
+  color: #FFFFFF;
+  font-size: 12px;
+  font-weight: 500;
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.18);
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity .14s ease, visibility .14s ease;
+}
+
+.sidebar.collapsed .menu-item:hover .ico::after {
+  opacity: 1 !important;
+  visibility: visible !important;
 }
 
 .side-foot {
   margin-top: auto;
-  padding-top: 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid #EEF1F5;
+  flex-shrink: 0;
 }
 
 .user {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 0;
-  padding: 8px 0;
-  border-radius: 13px;
-  background: linear-gradient(145deg, rgba(255,255,255,.12), rgba(255,255,255,.04));
-  border: 1px solid rgba(255,255,255,.10);
+  gap: 10px;
+  padding: 7px 8px;
+  border-radius: 12px;
+  background: transparent;
   cursor: pointer;
-  transition: background 0.2s, transform .2s, border-color .2s;
+  transition: background 0.15s ease;
 
-  &:hover { background: rgba(255, 255, 255, 0.16); border-color: rgba(255,255,255,.18); transform: translateY(-1px); }
+  &:hover {
+    background: #F0F4F9;
+  }
 }
 
 .user-avatar {
-  width: 36px;
-  height: 36px;
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
-  background: #FFFDF8;
-  color: var(--forest);
+  background: #E8F0FE;
+  color: #0B57D0;
   display: grid;
   place-items: center;
-  font-weight: 800;
+  font-weight: 700;
   font-size: 14px;
   overflow: hidden;
   flex-shrink: 0;
@@ -333,8 +433,10 @@ const avatarFallback = computed(() => (userStore.nickname || '旅人').charAt(0)
 
   b {
     display: block;
-    color: #FFFDF8;
+    color: #1F2329;
     font-size: 13px;
+    font-weight: 600;
+    line-height: 1.3;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -342,27 +444,20 @@ const avatarFallback = computed(() => (userStore.nickname || '旅人').charAt(0)
 
   small {
     display: block;
-    color: #7FA294;
+    margin-top: 1px;
+    color: #8C959F;
     font-size: 11px;
+    line-height: 1.2;
   }
-}
-.user-meta, .goto { display: none; }
-
-.goto {
-  width: 15px;
-  height: 15px;
-  color: #7FA294;
-  flex-shrink: 0;
 }
 
 @media (max-width: 860px) {
-  .sidebar { width: 56px; padding: 14px 8px; }
-  .brand { justify-content: center; padding: 4px 0 18px; }
-  .brand-name { display: none; }
-  .group-label { display: none; }
-  .menu-item { justify-content: center; padding: 12px 0; }
-  .menu-item .label { display: none; }
-  .user { justify-content: center; padding: 8px 0; }
-  .user-meta, .goto { display: none; }
+  .sidebar {
+    width: 60px;
+    padding: 12px 6px;
+  }
+  .brand-name, .group-label, .menu-item .label, .user-meta {
+    display: none;
+  }
 }
 </style>

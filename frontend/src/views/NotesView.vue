@@ -2480,28 +2480,25 @@ function onSectionResizeStart(e: PointerEvent, beforeKey: string, afterKey: stri
 
 <style scoped lang="scss">
 .notes-app {
-  /* Keep the editor's design tokens local; the surrounding app follows the
-     user's system palette independently. */
   position: relative;
   display: flex;
-  align-items: stretch;             /* 让所有子元素自动拉伸到全高 */
+  align-items: stretch;
   height: 100vh;
   overflow: hidden;
   min-width: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
-  background: color-mix(in srgb, var(--notes-bg, #ffffff) 90%, var(--notes-fg, #1f2329)) !important;
-  color: var(--notes-fg, #1f2329);
+  background: #F5F7FA !important;
+  color: var(--notes-fg, #1F2329);
   padding: 8px;
-  gap: 8px;
-  background: var(--wash, #f2ede1);
+  gap: 10px;
 }
 
 .system-theme-check {
   display: flex;
   align-items: center;
   gap: 7px;
-  margin: 10px 0;
-  color: var(--notes-fg, #1f2329);
+  margin: 8px 0;
+  color: var(--notes-fg, #1F2329);
   font-size: 12px;
   cursor: pointer;
 }
@@ -2511,12 +2508,11 @@ function onSectionResizeStart(e: PointerEvent, beforeKey: string, afterKey: stri
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  min-height: 0;                   /* 允许 flex 子项正确计算溢出 */
-  border: 1px solid color-mix(in srgb, var(--notes-fg, #1f2329) 10%, transparent);
-  border: 1px solid var(--notes-line, var(--line, #e5e6e8));
+  min-height: 0;
+  border: 1px solid #E2E7EE;
   border-radius: 14px;
   margin: 0;
-  box-shadow: 0 6px 18px color-mix(in srgb, var(--notes-fg, #1f2329) 8%, transparent);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
   overflow: hidden;
   will-change: transform, opacity;
 }
@@ -2741,10 +2737,10 @@ function onSectionResizeStart(e: PointerEvent, beforeKey: string, afterKey: stri
   margin-top: 8px;
   padding: 6px;
   overflow-y: auto;
-  border: 1px solid var(--notes-line, #e5e6e8);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--notes-bg, #fff) 84%, var(--notes-fg, #1f2329) 16%);
-  box-shadow: 0 8px 22px color-mix(in srgb, var(--notes-fg, #1f2329) 9%, transparent);
+  border: 1px solid #E5E9F0;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--notes-bg, #fff) 96%, var(--notes-fg, #1f2329) 4%);
+  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.04);
   scrollbar-width: thin;
 }
 
@@ -3015,40 +3011,47 @@ function onSectionResizeStart(e: PointerEvent, beforeKey: string, afterKey: stri
 
 .toolbar-btn {
   width: 100%;
-  padding: 8px 12px;
-  border: 1px solid var(--notes-line, #d8dade);
-  border-radius: 6px;
-  background: var(--notes-bg, #fff);
-  color: var(--notes-fg, #646a73);
-  font-size: 13px;
+  padding: 7px 10px;
+  border: 1px solid #E2E7EE;
+  border-radius: 10px;
+  background: #F8FAFD;
+  color: #3C4043;
+  font-size: 12px;
+  font-weight: 500;
   cursor: pointer;
   text-align: center;
-  transition: all .15s;
+  transition: all .15s ease;
 
   &:hover {
-    border-color: var(--notes-accent, #9bb8ff);
-    color: var(--notes-accent, #245bdb);
-    background: var(--notes-wash, #f4f7ff);
+    border-color: #C2D4F8;
+    color: #0B57D0;
+    background: #EDF3FE;
   }
 }
 
 .local-file-btn {
-  border-color: color-mix(in srgb, var(--sunset, #f27a4f) 45%, var(--notes-line, #d8dade));
-  color: color-mix(in srgb, var(--sunset, #f27a4f) 72%, var(--notes-fg, #1f2329));
+  border-color: #E2E7EE;
+  color: #444746;
 }
 
 .new-note-btn {
   width: 100%;
-  padding: 10px 12px;
+  padding: 9px 14px;
   border: 0;
-  border-radius: 6px;
-  color: #fff;
+  border-radius: 999px;
+  background: #0B57D0 !important;
+  color: #FFFFFF;
   font-weight: 600;
   font-size: 13px;
   cursor: pointer;
-  transition: opacity .15s;
+  box-shadow: 0 1px 3px rgba(11, 87, 208, 0.2);
+  transition: transform .15s ease, box-shadow .15s ease, background .15s ease;
 
-  &:hover { opacity: .9; }
+  &:hover {
+    background: #0842A0 !important;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(11, 87, 208, 0.25);
+  }
 }
 
 .notes-list {
@@ -3167,27 +3170,25 @@ function onSectionResizeStart(e: PointerEvent, beforeKey: string, afterKey: stri
   display: flex;
   flex-direction: column;
   min-width: 0;
-  min-height: 0;                   /* 允许 flex 子项正确计算溢出 */
+  min-height: 0;
   overflow: hidden;
-  background: var(--notes-bg, #fff);
-  border: 1px solid color-mix(in srgb, var(--notes-fg, #1f2329) 10%, transparent);
-  border: 1px solid var(--notes-line, var(--line, #e5e6e8));
+  background: var(--notes-bg, #FFFFFF);
+  border: 1px solid #E2E7EE;
   border-radius: 14px;
   margin: 0;
-  box-shadow: 0 6px 18px color-mix(in srgb, var(--notes-fg, #1f2329) 8%, transparent);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
 }
 
 .editor-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  /* 左右始终预留角落按钮空间：收起/展开时文字与按钮位置完全不变，零跳变 */
-  padding: 12px 68px;
-  border-bottom: 1px solid color-mix(in srgb, var(--notes-fg, #1f2329) 10%, transparent);
+  padding: 10px 24px;
+  border-bottom: 1px solid #EEF1F5;
   border-radius: 0;
-  gap: 16px;
+  gap: 14px;
   flex-shrink: 0;
-  background: var(--notes-bg, #fff);
+  background: var(--notes-bg, #FFFFFF);
 }
 
 .breadcrumb {
@@ -3288,13 +3289,13 @@ function onSectionResizeStart(e: PointerEvent, beforeKey: string, afterKey: stri
 }
 
 .format-toolbar {
-  min-height: 44px;
+  min-height: 42px;
   display: flex;
   align-items: center;
   gap: 5px;
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--notes-line, #e5e6e8);
-  background: color-mix(in srgb, var(--notes-bg, #fff) 88%, var(--notes-fg, #1f2329) 12%);
+  padding: 6px 16px;
+  border-bottom: 1px solid #EEF1F5;
+  background: color-mix(in srgb, var(--notes-bg, #FFFFFF) 97%, var(--notes-fg, #1F2329) 3%);
   flex-wrap: wrap;
 }
 .format-select {
@@ -3331,7 +3332,7 @@ function onSectionResizeStart(e: PointerEvent, beforeKey: string, afterKey: stri
 .color-dot--forest { background: var(--forest); }
 .color-dot--sunset { background: var(--sunset); }
 .color-dot--blue { background: #5378ff; }
-.insert-image-tool { height: 28px; border: 1px solid var(--notes-accent); border-radius: 7px; padding: 0 9px; background: var(--notes-accent); color: #fff; font-size: 11px; font-weight: 800; cursor: pointer; &:disabled { opacity: .55; cursor: wait; } }
+.insert-image-tool { height: 28px; border: 1px solid #D2E3FC; border-radius: 999px; padding: 0 12px; background: #E8F0FE; color: #0B57D0; font-size: 12px; font-weight: 600; cursor: pointer; transition: background .15s; &:hover:not(:disabled) { background: #D2E3FC; } &:disabled { opacity: .55; cursor: wait; } }
 
 .theme-popover-wrap { position: relative; }
 .theme-popover {
@@ -3381,14 +3382,16 @@ function onSectionResizeStart(e: PointerEvent, beforeKey: string, afterKey: stri
 .save-btn {
   padding: 7px 16px;
   border: 0;
-  border-radius: 6px;
-  color: #fff;
+  border-radius: 999px;
+  background: #0B57D0 !important;
+  color: #FFFFFF;
   font-weight: 600;
-  font-size: 13px;
+  font-size: 12.5px;
   cursor: pointer;
-  transition: opacity .15s;
+  box-shadow: 0 1px 3px rgba(11, 87, 208, 0.2);
+  transition: background .15s, transform .15s;
 
-  &:hover { opacity: .9; }
+  &:hover:not(:disabled) { background: #0842A0 !important; transform: translateY(-1px); }
   &:disabled { opacity: .5; cursor: not-allowed; }
 }
 
@@ -3723,30 +3726,22 @@ function onSectionResizeStart(e: PointerEvent, beforeKey: string, afterKey: stri
   width: 300px;
   display: flex;
   flex-direction: column;
-  min-height: 0;                   /* 关键：允许 flex 子项正确计算溢出 */
+  min-height: 0;
   box-sizing: border-box;
-  border: 1px solid color-mix(in srgb, var(--notes-fg, #1f2329) 10%, transparent);
-  border: 1px solid var(--notes-line, var(--line, #e5e6e8));
+  border: 1px solid #E2E7EE;
   border-radius: 14px;
   padding: 0 12px 12px;
   margin: 0;
-  box-shadow: 0 6px 18px color-mix(in srgb, var(--notes-fg, #1f2329) 8%, transparent);
-  overflow: hidden;                /* 裁剪溢出，由内部 scroll 容器处理滚动 */
-  background: var(--notes-bg, #fafafa);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  overflow: hidden;
+  background: var(--notes-bg, #FFFFFF);
   position: relative;
   z-index: 2;
 }
 
-.right-panel::-webkit-scrollbar {
-  width: 6px;
-}
-.right-panel::-webkit-scrollbar-thumb {
-  background: rgba(0,0,0,.2);
-  border-radius: 3px;
-}
-.right-panel::-webkit-scrollbar-track {
-  background: transparent;
-}
+.right-panel::-webkit-scrollbar { width: 6px; }
+.right-panel::-webkit-scrollbar-thumb { background: rgba(15, 23, 42, 0.14); border-radius: 999px; }
+.right-panel::-webkit-scrollbar-track { background: transparent; }
 
 /* 每个 section 独立成卡片 */
 .panel-section {
@@ -3755,17 +3750,17 @@ function onSectionResizeStart(e: PointerEvent, beforeKey: string, afterKey: stri
   flex-direction: column;
   flex: 0 0 auto;
   flex-shrink: 0;
-  min-height: 48px;
-  background: var(--card, #ffffff);
-  border: 1px solid #e5e6e8;
+  min-height: 44px;
+  background: #FFFFFF;
+  border: 1px solid #E8ECF2;
   border-radius: 12px;
-  overflow: visible;              /* 允许内容溢出显示 */
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+  overflow: hidden;
+  box-shadow: none;
 }
 
 /* 折叠状态：只保留 header，隐藏 body */
 .panel-section.collapsed {
-  max-height: 46px !important;   /* 只显示 header 的高度 */
+  max-height: 44px !important;
   overflow: hidden;
 }
 
@@ -3777,10 +3772,10 @@ function onSectionResizeStart(e: PointerEvent, beforeKey: string, afterKey: stri
   display: none;
 }
 
-/* section 之间的上下拖拽把手 */
+/* section 之间的上下拖拽把手：极简柔和细条，悬浮时高亮 */
 .section-drag-handle {
-  height: 14px;                  /* 增加高度，间距更宽 */
-  margin: 2px 0;
+  height: 10px;
+  margin: 1px 0;
   cursor: row-resize;
   position: relative;
   flex-shrink: 0;
@@ -3789,43 +3784,23 @@ function onSectionResizeStart(e: PointerEvent, beforeKey: string, afterKey: stri
   display: flex;
   align-items: center;
 
-  /* 中心拖拽条（灰色） */
   &::before {
     content: '';
     position: absolute;
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    width: 40px;
+    width: 32px;
     height: 3px;
-    border-radius: 2px;
-    background: #c5c9cf;
-    transition: background .15s, height .15s;
+    border-radius: 999px;
+    background: #E2E7EE;
+    transition: background .15s ease, width .15s ease;
   }
 
-  /* 左侧强调色短线 */
-  &::after {
-    content: '';
-    position: absolute;
-    top: 50%;
-    left: 18px;
-    transform: translateY(-50%);
-    width: 28px;
-    height: 3px;
-    border-radius: 2px;
-    background: var(--notes-accent, #3370ff);
-    transition: width .2s;
-  }
-
-  &:hover::before {
-    background: var(--notes-accent, #3370ff);
-    height: 4px;
-  }
-  &:hover::after { width: 40px; }
-
-  &:active::before,
-  &:active::after {
-    background: var(--notes-accent, #3370ff);
+  &:hover::before,
+  &:active::before {
+    width: 48px;
+    background: #0B57D0;
   }
 }
 
@@ -3923,27 +3898,29 @@ function onSectionResizeStart(e: PointerEvent, beforeKey: string, afterKey: stri
 }
 
 .preset-btn {
-  padding: 6px 12px;
-  border: 2px solid;
-  border-radius: 4px;
+  padding: 5px 11px;
+  border: 1px solid;
+  border-radius: 8px;
   font-size: 12px;
+  font-weight: 500;
   cursor: pointer;
-  transition: transform .1s;
+  transition: transform .14s ease, box-shadow .14s ease;
 
-  &:hover { transform: translateY(-2px); }
+  &:hover { transform: translateY(-1px); box-shadow: 0 2px 6px rgba(15, 23, 42, 0.08); }
 }
 
 .theme-save-btn {
-  padding: 8px;
+  padding: 8px 14px;
   border: 0;
-  border-radius: 6px;
-  color: #fff;
+  border-radius: 999px;
+  background: #0B57D0 !important;
+  color: #FFFFFF;
   font-weight: 600;
-  font-size: 13px;
+  font-size: 12.5px;
   cursor: pointer;
-  transition: opacity .15s;
+  transition: background .15s ease;
 
-  &:hover { opacity: .9; }
+  &:hover { background: #0842A0 !important; }
 }
 
 /* 大纲 */
@@ -4102,21 +4079,16 @@ function onSectionResizeStart(e: PointerEvent, beforeKey: string, afterKey: stri
 
   pre {
     position: relative;
-    padding: 42px 20px 18px;
-    border-radius: 10px;
-    background: #1e1f26;
-    border: 1px solid #3a3d45;
-    box-shadow: 0 6px 18px rgba(16, 18, 24, 0.28);
-    color: #d6d9e0;
+    padding: 36px 18px 16px;
+    border-radius: 12px;
+    background: #F6F8FA;
+    border: 1px solid #E2E7EE;
+    box-shadow: none;
+    color: #1F2329;
     overflow-x: auto;
-    margin: 20px 0;
+    margin: 18px 0;
     font-size: 13.5px;
     line-height: 1.7;
-    /* 顶部工具条（代码框头）：圆点 + 语言标签 */
-    background-image:
-      radial-gradient(circle at 16px 18px, #ff5f57 0 8px, transparent 9px),
-      radial-gradient(circle at 36px 18px, #febc2e 0 8px, transparent 9px),
-      radial-gradient(circle at 56px 18px, #28c840 0 8px, transparent 9px);
 
     code {
       padding: 0;
@@ -4126,35 +4098,34 @@ function onSectionResizeStart(e: PointerEvent, beforeKey: string, afterKey: stri
       font-family: 'SF Mono', ui-monospace, 'Menlo', 'Consolas', monospace;
     }
 
-    .code-comment { color: #8b949e; font-style: italic; }
-    .code-string { color: #a5d6ff; }
-    .code-keyword { color: #ff7b72; }
+    .code-comment { color: #6E7781; font-style: italic; }
+    .code-string { color: #0A3069; }
+    .code-keyword { color: #0550AE; font-weight: 600; }
 
     /* 语言角标 */
     &::after {
       content: attr(data-lang);
       position: absolute;
-      top: 22px;
-      right: 16px;
+      top: 10px;
+      right: 12px;
       font-size: 10.5px;
       font-weight: 600;
-      letter-spacing: .06em;
+      letter-spacing: .05em;
       text-transform: uppercase;
-      color: #9aa0aa;
-      background: rgba(255,255,255,.06);
-      border: 1px solid rgba(255,255,255,.1);
-      padding: 2px 9px;
-      border-radius: 4px;
+      color: #5F6368;
+      background: #EDF2F8;
+      border: 1px solid #DDE3EC;
+      padding: 2px 8px;
+      border-radius: 6px;
       font-family: 'SF Mono', ui-monospace, 'Menlo', monospace;
     }
   }
 
   hr {
     border: none;
-    height: 2px;
-    background: #6b737c;
-    border-radius: 1px;
-    margin: 32px 12px;
+    height: 1px;
+    background: #E2E7EE;
+    margin: 28px 0;
     flex-shrink: 0;
   }
 

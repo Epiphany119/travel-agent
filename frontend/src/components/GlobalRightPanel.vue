@@ -102,17 +102,14 @@ function copyUrl(url: string) {
   position: relative;
   flex-shrink: 0;
   height: 100%;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--card, #FFFDF8) 90%, var(--sunset, #f27a4f) 10%), var(--card, #FFFDF8));
+  background: #FFFFFF;
   display: flex;
   flex-direction: column;
   overflow: visible;
   box-sizing: border-box;
-  /* 左右面板之间的分割竖线（App.vue 的 .app-resize-handle 也画了一条，
-     这里只留一条淡色当底层分割）*/
-  border: 1px solid color-mix(in srgb, var(--forest, #164e42) 12%, var(--line, #E7E0D2));
+  border: 1px solid #E2E7EE;
   border-radius: 14px;
-  box-shadow: -8px 0 24px color-mix(in srgb, var(--forest, #164e42) 7%, transparent), inset 1px 0 rgba(255,255,255,.55);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
 }
 
 /* 内容起点从 header 下方对齐 */
@@ -129,46 +126,45 @@ function copyUrl(url: string) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 2px 10px;
-  background: linear-gradient(90deg, color-mix(in srgb, var(--forest, #164e42) 6%, transparent), transparent 80%);
-  border-bottom: 1px solid color-mix(in srgb, var(--notes-fg, #1f2329) 12%, transparent);
-  margin-bottom: 4px;
+  padding: 12px 2px 10px;
+  background: transparent;
+  border-bottom: 1px solid #EEF1F5;
+  margin-bottom: 6px;
   z-index: 10;
 }
 
 .panel-title {
   font-size: 13px;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: .01em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--ink, #1f2329);
+  color: #1F2329;
 }
 
 .panel-actions {
   display: flex;
-  gap: 4px;
+  gap: 6px;
   flex-shrink: 0;
 }
 
 .panel-btn {
   width: 28px;
   height: 28px;
-  border: 0;
-  background: color-mix(in srgb, var(--wash, #f0f1f2) 80%, var(--sunset, #f27a4f) 20%);
-  border: 1px solid color-mix(in srgb, var(--sunset, #f27a4f) 20%, var(--line, #e7e0d2));
+  border: 1px solid transparent;
+  background: #F0F4F9;
   border-radius: 8px;
   cursor: pointer;
   font-size: 13px;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--ink-2, #646a73);
+  color: #5F6368;
   transition: background .15s, color .15s;
 
-  &:hover { background: var(--roam-soft, #e5e6e8); color: var(--forest, #245bdb); }
-  &.close:hover { background: #fee; }
+  &:hover { background: #E8F0FE; color: #0B57D0; }
+  &.close:hover { background: #FCE8E6; color: #D93025; }
 }
 
 .panel-body {

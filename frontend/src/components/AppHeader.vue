@@ -137,8 +137,8 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <!-- 嵌入式标签栏：仿 Chrome 标签风格，始终占位固定宽度 -->
-    <div class="inline-tabs">
+    <!-- 嵌入式标签栏：仅在打开标签时展示底色，空态保持干净留白 -->
+    <div class="inline-tabs" :class="{ 'has-tabs': tabs.tabs.length > 0 }">
       <div v-if="tabs.tabs.length" class="tabs-scroll">
         <button
           v-for="t in tabs.tabs"
@@ -158,10 +158,14 @@ onBeforeUnmount(() => {
       <!-- 右侧栏开关：固定在右上角同一位置，点一下开 / 再点一下关 -->
       <button
         class="icon-btn panel-toggle-btn"
+        :class="{ active: rightPanel.show }"
         :title="rightPanel.show ? '收起右侧栏' : '打开右侧栏'"
         @click="emit('toggle-panel')"
       >
-        <img :src="rightPanel.show ? PanelCloseIcon : PanelOpenIcon" alt="右侧栏开关" />
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="4" width="18" height="16" rx="3" />
+          <line x1="15" y1="4" x2="15" y2="20" />
+        </svg>
       </button>
       <button class="icon-btn" title="通知">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -187,42 +191,43 @@ onBeforeUnmount(() => {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   width: 100%;
-  height: 48px;
-  padding: 4px 16px;
-  border-bottom: 1px solid rgba(255,255,255,0.12);
-  background: linear-gradient(90deg, rgba(255,255,255,.05), transparent 38%, rgba(242,122,79,.08));
+  height: 50px;
+  padding: 6px 14px;
+  background: transparent;
   flex-shrink: 0;
 }
 
-/* 搜索框：保留顶栏的轻量感，但给输入区明确的层级 */
+/* 胶囊搜索框：Google Material 3 / Gemini 浅灰胶囊 */
 .search {
   position: relative;
-  flex: 1 1 260px;
+  flex: 0 1 320px;
   min-width: 180px;
-  max-width: 420px;
+  max-width: 360px;
   display: flex;
   align-items: center;
   gap: 9px;
-  background: rgba(5, 35, 29, .34);
-  border: 1px solid rgba(255,255,255,0.12);
-  border-radius: 12px;
-  padding: 7px 11px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
-  transition: border-color .15s, background .15s, box-shadow .15s;
+  background: #F0F4F9;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 7px 14px;
+  transition: border-color .16s ease, background .16s ease, box-shadow .16s ease;
 
-  &:hover,
+  &:hover {
+    background: #E8EFF7;
+  }
+
   &:focus-within {
-    border-color: rgba(255,255,255,0.42);
-    background: rgba(5, 35, 29, .48);
-    box-shadow: 0 0 0 3px rgba(255,255,255,.06), inset 0 1px 0 rgba(255,255,255,.06);
+    background: #FFFFFF;
+    border-color: #0B57D0;
+    box-shadow: 0 0 0 3px rgba(11, 87, 208, 0.12);
   }
 
   svg {
     width: 15px;
     height: 15px;
-    color: rgba(255,255,255,0.7);
+    color: #5F6368;
     flex-shrink: 0;
   }
 
@@ -232,24 +237,24 @@ onBeforeUnmount(() => {
     border: 0;
     background: transparent;
     outline: 0;
-    color: #fff;
-    font: 600 13px Manrope, "Noto Sans SC", sans-serif;
+    color: #1F2329;
+    font: 500 13px Manrope, "Noto Sans SC", sans-serif;
 
-    &::placeholder { color: rgba(255,255,255,0.5); }
+    &::placeholder { color: #747775; }
   }
 }
 
 .search-popover {
   position: absolute;
-  top: calc(100% + 9px);
+  top: calc(100% + 8px);
   left: 0;
   width: min(360px, calc(100vw - 32px));
   padding: 8px;
-  border: 1px solid var(--line, rgba(255,255,255,.2));
-  border-radius: 14px;
-  background: var(--card, #fffdf8);
-  color: var(--ink, #1d2b27);
-  box-shadow: 0 16px 34px rgba(8, 44, 37, .22);
+  border: 1px solid #E2E7EE;
+  border-radius: 16px;
+  background: #FFFFFF;
+  color: #1F2329;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.12);
   z-index: 10020;
 }
 
@@ -258,12 +263,12 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   align-items: center;
   padding: 5px 8px 8px;
-  color: var(--ink-2, #66756e);
+  color: #5F6368;
   font-size: 11px;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: .04em;
 
-  small { color: var(--ink-3, #9aa9a2); font-size: 10px; font-weight: 600; }
+  small { color: #8C959F; font-size: 10px; font-weight: 500; }
 }
 
 .search-user {
@@ -279,7 +284,7 @@ onBeforeUnmount(() => {
   text-align: left;
   cursor: pointer;
 
-  &:hover { background: var(--roam-soft, #e5f0ea); }
+  &:hover { background: #F0F4F9; }
 }
 
 .search-avatar {
@@ -290,10 +295,10 @@ onBeforeUnmount(() => {
   flex: 0 0 32px;
   overflow: hidden;
   border-radius: 50%;
-  background: var(--roam-soft, #e5f0ea);
-  color: var(--forest, #164e42);
+  background: #E8F0FE;
+  color: #0B57D0;
   font-size: 12px;
-  font-weight: 900;
+  font-weight: 800;
 
   img { width: 100%; height: 100%; object-fit: cover; }
 }
@@ -304,33 +309,39 @@ onBeforeUnmount(() => {
 
   b, small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   b { font-size: 12px; }
-  small { margin-top: 2px; color: var(--ink-3, #9aa9a2); font-size: 10px; }
+  small { margin-top: 2px; color: #8C959F; font-size: 10px; }
 }
 
-.search-user-arrow { color: var(--ink-3, #9aa9a2); font-size: 16px; }
-.search-state { padding: 16px 8px; color: var(--ink-3, #9aa9a2); font-size: 12px; text-align: center; }
-.search-more { width: 100%; margin-top: 4px; padding: 8px; border: 0; border-top: 1px solid var(--line, #e7e0d2); background: transparent; color: var(--forest, #164e42); font-size: 11px; font-weight: 800; text-align: left; cursor: pointer; }
+.search-user-arrow { color: #8C959F; font-size: 15px; }
+.search-state { padding: 16px 8px; color: #8C959F; font-size: 12px; text-align: center; }
+.search-more { width: 100%; margin-top: 4px; padding: 8px; border: 0; border-top: 1px solid #EEF1F5; background: transparent; color: #0B57D0; font-size: 11px; font-weight: 700; text-align: left; cursor: pointer; }
 
-/* 嵌入在 header 里的 Chrome 风格标签栏 */
+/* 嵌入式标签栏：空态完全隐形，有标签时呈柔和浅灰胶囊轨 */
 .inline-tabs {
   display: flex;
   align-items: center;
   gap: 4px;
-  flex: 1 1 auto;       /* 填满 app-header 剩余空间 */
-  min-width: 180px;
-  height: 30px;
-  padding: 0 6px;
-  background: rgba(8, 44, 37, 0.28);
-  border: 1px solid rgba(255,255,255,0.13);
-  border-radius: 11px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
+  flex: 1 1 auto;
+  min-width: 40px;
+  height: 34px;
+  padding: 0 4px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 12px;
   overflow: hidden;
+  transition: background .16s ease, border-color .16s ease;
+
+  &.has-tabs {
+    background: #F0F4F9;
+    border-color: #E2E7EE;
+    padding: 3px 6px;
+  }
 }
 
 .tabs-scroll {
   display: flex;
-  align-items: stretch;
-  gap: 2px;
+  align-items: center;
+  gap: 4px;
   overflow-x: auto;
   scrollbar-width: none;
   flex: 1;
@@ -342,61 +353,60 @@ onBeforeUnmount(() => {
 .tab-item {
   display: flex;
   align-items: center;
-  gap: 4px;
-  max-width: 150px;
-  padding: 0 8px;
+  gap: 6px;
+  max-width: 160px;
+  padding: 0 10px;
   border: 0;
-  border-radius: 0;
+  border-radius: 8px;
   background: transparent;
-  color: rgba(255,255,255,0.62);
+  color: #5F6368;
   font-size: 12px;
+  font-weight: 500;
   line-height: 1;
-  height: 100%;
+  height: 26px;
   cursor: pointer;
   white-space: nowrap;
-  transition: color .15s;
+  transition: color .15s, background .15s, box-shadow .15s;
   flex-shrink: 0;
-  position: relative;
-  border-bottom: 2px solid transparent;
 
-  &:hover { color: #fff; background: rgba(255,255,255,.07); }
+  &:hover { color: #1F2329; background: rgba(15, 23, 42, 0.05); }
 
   &.active {
-    background: rgba(255,255,255,.12);
-    color: #fff;
-    font-weight: 700;
-    border-bottom-color: var(--sunset, #f27a4f);  /* 当前页指示线 */
-    border-radius: 8px 8px 5px 5px;
+    background: #FFFFFF;
+    color: #0B57D0;
+    font-weight: 650;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
   }
 }
 
 .tab-label {
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 110px;
+  max-width: 112px;
 }
 
 .tab-close {
   font-size: 13px;
   line-height: 1;
-  padding: 0 2px;
+  padding: 1px 3px;
   border-radius: 50%;
   opacity: .55;
 
-  &:hover { opacity: 1; background: rgba(0, 0, 0, .08); }
+  &:hover { opacity: 1; background: rgba(15, 23, 42, 0.08); }
 }
 
 .tab-close-all {
   border: 0;
   background: transparent;
-  color: rgba(255,255,255,0.62);
+  color: #5F6368;
   font-size: 11px;
   line-height: 1;
   cursor: pointer;
-  padding: 2px 4px;
+  padding: 4px 6px;
+  border-radius: 6px;
   flex-shrink: 0;
 
-  &:hover { color: #fff; background: rgba(255,255,255,.08); border-radius: 4px; }
+  &:hover { color: #1F2329; background: rgba(15, 23, 42, 0.06); }
 }
 
 .actions {
@@ -409,69 +419,74 @@ onBeforeUnmount(() => {
 .new-btn {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   border: 0;
-  background: #fff;
-  color: var(--forest);
-  font-weight: 800;
+  background: #0B57D0;
+  color: #FFFFFF;
+  font-weight: 600;
   font-size: 13px;
   padding: 7px 16px;
-  border-radius: 10px;
+  border-radius: 999px;
   cursor: pointer;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-  transition: transform 0.15s, box-shadow 0.15s;
+  box-shadow: 0 1px 3px rgba(11, 87, 208, 0.22);
+  transition: transform 0.15s, box-shadow 0.15s, background 0.15s;
 
   &:hover {
+    background: #0842A0;
     transform: translateY(-1px);
-    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25);
+    box-shadow: 0 4px 12px rgba(11, 87, 208, 0.28);
   }
 
-  .plus { font-size: 15px; line-height: 1; }
+  .plus { font-size: 14px; line-height: 1; }
 }
 
 .icon-btn {
   position: relative;
-  width: 32px;
-  height: 32px;
-  border-radius: 10px;
-  border: 1px solid rgba(255,255,255,.08);
-  background: rgba(255,255,255,0.12);
-  color: #fff;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: #F0F4F9;
+  color: #444746;
   display: grid;
   place-items: center;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
 
-  svg { width: 15px; height: 15px; }
+  svg { width: 16px; height: 16px; }
 
   img {
-    width: 18px;
-    height: 18px;
+    width: 17px;
+    height: 17px;
     display: block;
     pointer-events: none;
   }
 
-  &:hover { background: rgba(255,255,255,0.25); }
+  &:hover {
+    background: #E4ECF7;
+    color: #0B57D0;
+  }
 }
 
-/* 右侧栏开关按钮：固定右上角，强调色描边区分于普通图标按钮 */
-.panel-toggle-btn {
-  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.35);
+.panel-toggle-btn.active {
+  background: #E8F0FE;
+  color: #0B57D0;
+  border-color: rgba(11, 87, 208, 0.22);
 }
 
 .badge-dot {
   position: absolute;
-  top: 8px;
+  top: 7px;
   right: 8px;
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--sunset);
-  box-shadow: 0 0 0 2px var(--forest);
+  background: #EA4335;
+  box-shadow: 0 0 0 2px #F0F4F9;
 }
 
 @media (max-width: 640px) {
-  .app-header { padding: 6px 12px; }
+  .app-header { padding: 6px 10px; }
   .icon-btn { display: none; }
 }
 </style>

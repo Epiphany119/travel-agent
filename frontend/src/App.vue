@@ -2,17 +2,11 @@
   <router-view v-if="isAuthPage" />
   <div v-else class="app-layout">
     <CommandPalette />
-    <div class="app-header-row">
-      <!-- 顶栏横跨整个系统宽度：左栏 + app-main（右侧） -->
-      <div class="app-header-left-spacer"></div>
-      <AppHeader @toggle-panel="onPanelToggle" />
-    </div>
-
-    
-    <div class="app-main-row">
-      <AppSidebar />
-
-      <!-- app-main：一张白色圆角大卡片，里面横向布局 header + workspace + right-panel -->
+    <AppSidebar />
+    <div class="app-right-column">
+      <div class="app-header-row">
+        <AppHeader @toggle-panel="onPanelToggle" />
+      </div>
       <div class="app-main">
         <div class="app-body">
           <!-- 中间工作区 -->
@@ -21,7 +15,6 @@
             <router-view v-slot="{ Component, route: r }">
               <component :is="Component" :key="r.fullPath" class="workspace-route-view" />
             </router-view>
-
           </div>
 
           <!-- 右侧查看栏 -->
@@ -392,53 +385,80 @@ body {
 </style>
 
 <style>
-/* ─── 当前产品壳层：纸张底、森林绿导航、暖橙行动色 ────────────────
-   这些是派生令牌，不覆盖用户在个人资料里保存的三色主题；主题切换时
-   --paper / --forest / --sunset 会自动带着整套界面一起变化。 */
+/* ─── 现代极简浅色壳层（Google Material 3 / Gemini 风格） ────────────────
+   保留用户保存的系统主题令牌（--paper / --forest / --sunset），
+   同时用干净的浅色画布、细描边与轻量阴影替代厚重色块和强投影。 */
 :root {
-  --paper-deep: color-mix(in srgb, var(--paper) 88%, var(--ink) 12%);
-  --surface-tint: color-mix(in srgb, var(--paper) 84%, var(--forest) 16%);
-  --forest-wash: color-mix(in srgb, var(--forest) 9%, var(--paper));
-  --sunset-wash: color-mix(in srgb, var(--sunset) 9%, var(--paper));
-  --surface-raised: color-mix(in srgb, var(--paper) 78%, #fff);
+  --surface-canvas: #F5F7FA;
+  --surface-elevated: #FFFFFF;
+  --surface-pill: #F0F4F9;
+  --surface-pill-hover: #E4ECF7;
+  --border-hairline: #E2E7EE;
+  --ink-primary: #1F2329;
+  --ink-secondary: #5F6368;
+  --ink-muted: #8C959F;
+  --paper-deep: color-mix(in srgb, var(--paper) 92%, var(--ink) 8%);
+  --surface-tint: color-mix(in srgb, var(--paper) 92%, var(--forest) 8%);
+  --forest-wash: color-mix(in srgb, var(--forest) 6%, var(--paper));
+  --sunset-wash: color-mix(in srgb, var(--sunset) 6%, var(--paper));
+  --surface-raised: #FFFFFF;
 }
 
 body {
-  background:
-    radial-gradient(circle at 12% 14%, var(--sunset-wash), transparent 24rem),
-    radial-gradient(circle at 88% 4%, var(--forest-wash), transparent 30rem),
-    var(--paper);
+  background: var(--surface-canvas);
+  color: var(--ink-primary);
 }
 
 .app-layout {
-  background:
-    radial-gradient(circle at 94% 10%, color-mix(in srgb, var(--forest) 9%, transparent), transparent 32rem),
-    radial-gradient(circle at 12% 92%, color-mix(in srgb, var(--sunset) 6%, transparent), transparent 30rem),
-    var(--paper);
+  flex-direction: row;
+  background: var(--surface-canvas);
+}
+
+.app-right-column {
+  flex: 1;
+  min-width: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding: 10px;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.app-header-row {
+  padding: 0;
 }
 
 .app-header-row > .app-header {
-  background: linear-gradient(112deg, var(--forest-deep) 0%, var(--forest) 58%, color-mix(in srgb, var(--forest) 76%, var(--sunset)) 150%);
-  box-shadow: 0 8px 22px color-mix(in srgb, var(--forest) 20%, transparent), inset 0 1px 0 rgba(255,255,255,.10);
+  height: 50px;
+  margin-right: 0;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(12px);
+  color: var(--ink-primary);
+  border: 1px solid var(--border-hairline);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04), 0 4px 14px rgba(15, 23, 42, 0.03);
 }
 
 .app-main {
-  background: color-mix(in srgb, var(--paper) 76%, #fff);
-  border-color: color-mix(in srgb, var(--forest) 12%, var(--line));
-  box-shadow: 0 18px 48px color-mix(in srgb, var(--forest) 8%, transparent);
+  margin-top: 0;
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-hairline);
+  border-radius: 18px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.03), 0 8px 24px rgba(15, 23, 42, 0.04);
 }
 
 .app-body {
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--forest) 5%, transparent), transparent 42%),
-    linear-gradient(315deg, color-mix(in srgb, var(--sunset) 4%, transparent), transparent 40%),
-    var(--wash);
+  background: var(--surface-canvas);
+  gap: 10px;
+  padding: 10px;
 }
 
 .workspace {
-  background: color-mix(in srgb, var(--paper) 82%, #fff);
-  border: 1px solid color-mix(in srgb, var(--forest) 9%, var(--line));
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.55);
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-hairline);
+  border-radius: 14px;
+  box-shadow: none;
 }
 
 .workspace-route-view {
@@ -446,14 +466,16 @@ body {
 }
 
 .app-resize-handle::before {
-  background: color-mix(in srgb, var(--forest) 16%, var(--line));
+  background: var(--border-hairline);
 }
 
-::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--forest) 23%, var(--line)); }
-::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--forest) 40%, var(--line)); }
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-thumb { background: rgba(15, 23, 42, 0.14); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(15, 23, 42, 0.28); }
+::-webkit-scrollbar-track { background: transparent; }
 
 @media (max-width: 860px) {
-  .app-main { border-radius: 12px; }
+  .app-main { border-radius: 14px; }
   .app-body { padding: 6px; gap: 6px; }
 }
 </style>
