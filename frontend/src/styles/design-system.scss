@@ -2,20 +2,49 @@
   --motion-fast: 140ms;
   --motion-base: 220ms;
   --motion-smooth: cubic-bezier(.22, 1, .36, 1);
+
+  /* Pure White Minimalist Design System (Gemini Web / Notion Light) */
+  --bg-canvas: #F7F9FC;
+  --bg-surface: #FFFFFF;
+  --bg-pill: #F0F4F9;
+  --bg-pill-hover: #E4ECF7;
+  --border-subtle: #E5E9F0;
+  --border-default: #DADCE0;
+  --text-primary: #1F2329;
+  --text-secondary: #5F6368;
+  --text-muted: #8C959F;
+  --accent-primary: #0B57D0;
+  --accent-hover: #0842A0;
+  --accent-soft: #E8F0FE;
 }
 
-::selection { background: color-mix(in srgb, var(--forest) 24%, transparent); color: var(--ink); }
+::selection {
+  background: rgba(11, 87, 208, 0.16);
+  color: #1F2329;
+}
 
-button, a, input, textarea, select { -webkit-tap-highlight-color: transparent; }
-button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
-  outline: 2px solid var(--forest);
+button, a, input, textarea, select {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--accent-primary);
   outline-offset: 2px;
 }
 
-.workspace-route-view { animation: route-enter var(--motion-base) var(--motion-smooth); }
-@keyframes route-enter { from { opacity: .78; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
+.workspace-route-view {
+  animation: route-enter var(--motion-base) var(--motion-smooth);
+}
 
-/* 所有功能页共享相同的阅读宽度和滚动行为，避免页面之间跳动。 */
+@keyframes route-enter {
+  from { opacity: .85; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 .workspace-route-view > .page,
 .workspace-route-view > .shell,
 .workspace-route-view > .search-page,
@@ -25,24 +54,72 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .workspace-route-view > .agent-page,
 .workspace-route-view > .app-shell {
   min-height: 100%;
-  color: var(--ink);
+  color: var(--text-primary);
 }
 
-.el-dialog { border: 1px solid var(--line); border-radius: 16px; background: var(--card); overflow: hidden; }
-.el-dialog__header { margin-right: 0; padding: 18px 22px 14px; border-bottom: 1px solid var(--line); }
-.el-dialog__title { color: var(--ink); font-weight: 750; }
-.el-dialog__body { color: var(--ink); }
-.el-input__wrapper, .el-textarea__inner, .el-select__wrapper {
-  background: var(--card); box-shadow: 0 0 0 1px var(--line) inset;
+/* Element Plus 统一极简浅色风格 */
+.el-dialog {
+  border: 1px solid var(--border-subtle);
+  border-radius: 20px;
+  background: #FFFFFF;
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.12);
+  overflow: hidden;
+}
+
+.el-dialog__header {
+  margin-right: 0;
+  padding: 18px 22px 14px;
+  border-bottom: 1px solid #EEF1F5;
+}
+
+.el-dialog__title {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.el-dialog__body {
+  color: var(--text-primary);
+}
+
+.el-input__wrapper,
+.el-textarea__inner,
+.el-select__wrapper {
+  background: #FFFFFF;
+  border-radius: 10px;
+  box-shadow: 0 0 0 1px var(--border-default) inset;
   transition: box-shadow var(--motion-fast) ease, background var(--motion-fast) ease;
 }
-.el-input__wrapper:hover, .el-input__wrapper.is-focus, .el-textarea__inner:focus, .el-select__wrapper.is-focused {
-  box-shadow: 0 0 0 1px var(--forest) inset, 0 0 0 3px color-mix(in srgb, var(--forest) 10%, transparent);
+
+.el-input__wrapper:hover,
+.el-input__wrapper.is-focus,
+.el-textarea__inner:focus,
+.el-select__wrapper.is-focused {
+  box-shadow: 0 0 0 1.5px var(--accent-primary) inset, 0 0 0 3px rgba(11, 87, 208, 0.1);
 }
-.el-button { border-radius: 8px; font-weight: 700; transition: transform var(--motion-fast) ease, box-shadow var(--motion-fast) ease, background var(--motion-fast) ease; }
-.el-button:not(:disabled):hover { transform: translateY(-1px); }
-.el-message, .el-message-box { border-color: var(--line); background: var(--card); }
+
+.el-button {
+  border-radius: 999px;
+  font-weight: 600;
+  transition: transform var(--motion-fast) ease, box-shadow var(--motion-fast) ease, background var(--motion-fast) ease;
+}
+
+.el-button:not(:disabled):hover {
+  transform: translateY(-1px);
+}
+
+.el-message,
+.el-message-box {
+  border-color: var(--border-subtle);
+  border-radius: 16px;
+  background: #FFFFFF;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.12);
+}
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: .01ms !important;
+  }
 }

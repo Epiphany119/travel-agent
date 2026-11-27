@@ -3063,28 +3063,34 @@ function onSectionResizeStart(e: PointerEvent, beforeKey: string, afterKey: stri
 .note-item {
   width: 100%;
   text-align: left;
-  padding: 12px;
-  border: 0;
-  border-radius: 8px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
   background: transparent;
   cursor: pointer;
-  margin-bottom: 4px;
-  transition: background .15s;
+  margin-bottom: 3px;
+  transition: background .15s ease, border-color .15s ease;
 
-  &:hover { background: #f0f1f2; }
+  &:hover { background: #F0F4F9; }
+
+  &.active {
+    background: #E8F0FE !important;
+    color: #0B57D0 !important;
+    border-color: rgba(11, 87, 208, 0.12);
+  }
 
   .note-title {
-    font-size: 14px;
-    font-weight: 500;
-    margin-bottom: 4px;
+    font-size: 13.5px;
+    font-weight: 550;
+    margin-bottom: 3px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .note-time {
-    font-size: 12px;
-    color: #8f959e;
+    font-size: 11px;
+    color: #8C959F;
   }
 }
 
@@ -3274,17 +3280,17 @@ function onSectionResizeStart(e: PointerEvent, beforeKey: string, afterKey: stri
 
 .publish-btn {
   height: 32px;
-  padding: 0 12px;
-  border: 1px solid var(--sunset, #f27a4f);
-  border-radius: 8px;
-  background: var(--sunset, #f27a4f);
-  color: #fff;
+  padding: 0 14px;
+  border: 1px solid #D2E3FC;
+  border-radius: 999px;
+  background: #E8F0FE;
+  color: #0B57D0;
   font-size: 12px;
-  font-weight: 800;
+  font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
-  transition: transform .15s, box-shadow .15s, opacity .15s;
-  &:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 5px 14px color-mix(in srgb, var(--sunset) 24%, transparent); }
+  transition: background .15s ease, border-color .15s ease;
+  &:hover:not(:disabled) { background: #D2E3FC; border-color: #AECBFA; }
   &:disabled { opacity: .55; cursor: wait; }
 }
 
@@ -3836,15 +3842,16 @@ function onSectionResizeStart(e: PointerEvent, beforeKey: string, afterKey: stri
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 16px;
-  font-size: 13px;
-  font-weight: 600;
+  padding: 11px 14px;
+  font-size: 12.5px;
+  font-weight: 650;
   cursor: pointer;
-  color: inherit;
-  border-bottom: 1px solid #eef0f2;   /* 卡片内 header 与 body 的分隔 */
-  background: #fafbfc;
+  color: #1F2329;
+  border-bottom: 1px solid #EEF1F5;
+  background: #FFFFFF;
+  transition: background .15s ease;
 
-  &:hover { background: #f0f2f4; }
+  &:hover { background: #F7F9FC; }
 }
 
 .collapse-icon { font-size: 10px; color: #8f959e; }
