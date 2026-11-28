@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onBeforeUnmount, onUnmounted, watch, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, watch, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useRightPanelStore } from '@/stores/rightPanel'
 import { useAgentSessionStore } from '@/stores/agentSession'
+import { recommendBudget, type BudgetRecommendResponse } from '@/api/planning'
 import PlanPane from './PlanPane.vue'
 
 /** 由 GlobalRightPanel 传入：告诉子组件它被渲染在右栏宿主里 */
@@ -18,6 +19,33 @@ const agent = useAgentSessionStore()
 const askingNumber = computed(() =>
   !agent.done && (agent.currentQuestion?.field === 'budget' || agent.currentQuestion?.inputType === 'number')
 )
+
+// 预算问答环节：自动根据用户已答的目的地/天数拉取当地物价与推荐预算
+const budgetHint = ref<BudgetRecommendResponse | null>(null)
+watch(askingNumber, async (isBudgetStep) => {
+  if (!isBudgetStep) {
+    budgetHint.value = null
+    return
+  }
+  const dest = (agent.answers?.destination || '').trim()
+  if (!dest) return
+  const parsedDays = Math.max(1, parseInt(agent.answers?.days || '3', 10) || 3)
+  try {
+    budgetHint.value = await recommendBudget({
+      destination: dest,
+      days: parsedDays,
+      travelers: 1,
+      travelStyle: agent.answers?.madeAt || '轻松漫游'
+    })
+  } catch {
+    budgetHint.value = null
+  }
+}, { immediate: true })
+
+function applyBudgetHint() {
+  if (!budgetHint.value) return
+  agent.input = String(budgetHint.value.recommendedBudget)
+}
 
 // 数字输入框的 v-model 会得到 number，先转回字符串再交给 store 的 send()
 function submit() {
@@ -141,19 +169,29 @@ onUnmounted(() => {
             <div ref="scrollBox" class="log">
               <div v-for="(m, i) in agent.messages" :key="i" class="msg" :class="m.role">
                 <p>{{ m.content }}</p>
-                <div v-if="askingNumber && m.role === 'agent' && i === agent.messages.length - 1" class="inline-num">
-                  <input
-                    type="number"
-                    min="300"
-                    max="200000"
-                    step="100"
-                    v-model="agent.input"
-                    :disabled="agent.sending"
-                    placeholder="输入预算数字（元）"
-                    @keyup.enter="submit"
-                  />
-                  <span class="unit">元</span>
-                  <button class="confirm" :disabled="agent.sending || !agent.input" @click="submit">确定</button>
+                <div v-if="askingNumber && m.role === 'agent' && i === agent.messages.length - 1" class="inline-budget-wrap">
+                  <div v-if="budgetHint" class="inline-budget-hint">
+                    <div class="hint-head">
+                      <span class="hint-tag">{{ budgetHint.tierLabel }}</span>
+                      <span v-if="budgetHint.seasonLabel" class="hint-tag hint-tag--soft">{{ budgetHint.travelMonth }}月{{ budgetHint.seasonLabel }}</span>
+                      <button type="button" class="hint-apply" @click="applyBudgetHint">填入推荐 ¥{{ budgetHint.recommendedBudget.toLocaleString() }}</button>
+                    </div>
+                    <small>当地 {{ budgetHint.days }} 天参考区间 ¥{{ budgetHint.minBudget.toLocaleString() }}–¥{{ budgetHint.maxBudget.toLocaleString() }}（{{ budgetHint.priceNote }}）</small>
+                  </div>
+                  <div class="inline-num">
+                    <input
+                      type="number"
+                      min="300"
+                      max="200000"
+                      step="100"
+                      v-model="agent.input"
+                      :disabled="agent.sending"
+                      placeholder="输入预算数字（元）"
+                      @keyup.enter="submit"
+                    />
+                    <span class="unit">元</span>
+                    <button class="confirm" :disabled="agent.sending || !agent.input" @click="submit">确定</button>
+                  </div>
                 </div>
               </div>
               <div v-if="agent.sending && !agent.done" class="typing"><span></span><span></span><span></span></div>
@@ -243,19 +281,28 @@ onUnmounted(() => {
         <div ref="scrollBox" class="log">
           <div v-for="(m, i) in agent.messages" :key="i" class="msg" :class="m.role">
             <p>{{ m.content }}</p>
-            <div v-if="askingNumber && m.role === 'agent' && i === agent.messages.length - 1" class="inline-num">
-              <input
-                type="number"
-                min="300"
-                max="200000"
-                step="100"
-                v-model="agent.input"
-                :disabled="agent.sending"
-                placeholder="输入预算数字（元）"
-                @keyup.enter="submit"
-              />
-              <span class="unit">元</span>
-              <button class="confirm" :disabled="agent.sending || !agent.input" @click="submit">确定</button>
+            <div v-if="askingNumber && m.role === 'agent' && i === agent.messages.length - 1" class="inline-budget-wrap">
+              <div v-if="budgetHint" class="inline-budget-hint">
+                <div class="hint-head">
+                  <span class="hint-tag">{{ budgetHint.tierLabel }}</span>
+                  <button type="button" class="hint-apply" @click="applyBudgetHint">填入 ¥{{ budgetHint.recommendedBudget.toLocaleString() }}</button>
+                </div>
+                <small>当地参考 ¥{{ budgetHint.minBudget.toLocaleString() }}–¥{{ budgetHint.maxBudget.toLocaleString() }}</small>
+              </div>
+              <div class="inline-num">
+                <input
+                  type="number"
+                  min="300"
+                  max="200000"
+                  step="100"
+                  v-model="agent.input"
+                  :disabled="agent.sending"
+                  placeholder="输入预算数字（元）"
+                  @keyup.enter="submit"
+                />
+                <span class="unit">元</span>
+                <button class="confirm" :disabled="agent.sending || !agent.input" @click="submit">确定</button>
+              </div>
             </div>
           </div>
           <div v-if="agent.sending && !agent.done" class="typing"><span></span><span></span><span></span></div>
@@ -552,11 +599,59 @@ onUnmounted(() => {
   max-width: 90%;
 }
 
+.inline-budget-wrap {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.inline-budget-hint {
+  padding: 9px 11px;
+  border-radius: 12px;
+  background: #FFFFFF;
+  border: 1px solid #DCE5F2;
+  .hint-head {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 4px;
+  }
+  .hint-tag {
+    font-size: 11px;
+    font-weight: 700;
+    color: #0B57D0;
+    background: #E8F0FE;
+    padding: 2px 8px;
+    border-radius: 999px;
+  }
+  .hint-tag--soft {
+    color: #3C4043;
+    background: #F0F4F9;
+  }
+  .hint-apply {
+    margin-left: auto;
+    border: 1px solid #C2D7FA;
+    background: #FFFFFF;
+    color: #0B57D0;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 9px;
+    border-radius: 999px;
+    cursor: pointer;
+    &:hover { background: #E8F0FE; }
+  }
+  small {
+    display: block;
+    font-size: 11.5px;
+    color: #5F6368;
+    line-height: 1.45;
+  }
+}
 .inline-num {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 10px;
 
   input {
     width: 150px;

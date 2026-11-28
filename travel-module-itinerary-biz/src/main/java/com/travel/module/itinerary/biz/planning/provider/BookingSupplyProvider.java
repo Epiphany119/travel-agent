@@ -4,7 +4,8 @@ import java.util.List;
 
 /**
  * 外部机票/高铁与酒店供给提供者接口。
- * 第一阶段由占位实现生成结构化推荐方案，第二/三阶段接入真实 OTA/联盟 API。
+ * 第一/二阶段由占位实现提供结构化方案（含出发/返程日期、班次时刻、入住离店日期与商圈距离），
+ * 后续通过配置开关无缝切换真实 OTA / 联盟 API。
  */
 public interface BookingSupplyProvider {
 
@@ -13,6 +14,7 @@ public interface BookingSupplyProvider {
     BookingPlaceholderResult searchPlaceholders(
             String departureCity,
             String destination,
+            String startDate,
             int days,
             int travelers,
             String travelStyle,
@@ -25,10 +27,15 @@ public interface BookingSupplyProvider {
             String category,
             String title,
             String carrier,
+            String codeNo,
+            String outboundSchedule,
+            String returnSchedule,
+            String durationText,
             String scheduleSummary,
             int unitPrice,
             int totalPrice,
             String tag,
+            boolean recommended,
             String bookingStatus,
             String dataSource
     ) {}
@@ -38,6 +45,9 @@ public interface BookingSupplyProvider {
             String name,
             String area,
             String roomType,
+            String checkInDate,
+            String checkOutDate,
+            double distanceToCenterKm,
             int nights,
             int rooms,
             int pricePerNight,
@@ -51,6 +61,9 @@ public interface BookingSupplyProvider {
     record BookingPlaceholderResult(
             String departureCity,
             String destination,
+            String startDate,
+            String endDate,
+            String transportAdvice,
             List<TransportOffer> transportOptions,
             List<HotelOffer> hotelOptions,
             String notice,

@@ -2,6 +2,7 @@ package com.travel.module.itinerary.biz.planning.provider;
 
 import com.travel.module.itinerary.biz.planning.provider.TransportRoutingProvider.DayStopsInput;
 import com.travel.module.itinerary.biz.planning.provider.TransportRoutingProvider.DayTransportPlan;
+import com.travel.module.itinerary.biz.planning.provider.TransportRoutingProvider.RouteOptimizationResult;
 import com.travel.module.itinerary.biz.planning.provider.TransportRoutingProvider.StopInput;
 import com.travel.module.itinerary.biz.planning.provider.TransportRoutingProvider.TransportSegment;
 import org.junit.jupiter.api.BeforeEach;
@@ -66,6 +67,25 @@ class PlaceholderTransportRoutingProviderTest {
         assertTrue(plan.totalDurationMinutes() > 95 || plan.totalDistanceKm() > 28.0);
         assertNotNull(plan.routeWarning());
         assertTrue(plan.routeWarning().contains("跨区通勤偏长"));
+    }
+
+    @Test
+    void optimizesBacktrackingDayOrderByClusteringSameDistrict() {
+        DayStopsInput zigzagDay = new DayStopsInput(1, List.of(
+                new StopInput("故宫博物院", "北京市东城区景山前街", "sightseeing"),
+                new StopInput("颐和园", "北京市海淀区新建宫门路", "sightseeing"),
+                new StopInput("王府井小吃", "北京市东城区王府井大街", "sightseeing"),
+                new StopInput("圆明园", "北京市海淀区清华西路", "sightseeing")
+        ));
+
+        RouteOptimizationResult opt = provider.optimizeDayOrder("北京", zigzagDay);
+
+        assertTrue(opt.reordered());
+        assertTrue(opt.optimizedDistanceKm() <= opt.originalDistanceKm());
+        assertEquals(4, opt.optimizedStops().size());
+        assertEquals("故宫博物院", opt.optimizedStops().get(0).name());
+        assertEquals("王府井小吃", opt.optimizedStops().get(1).name());
+        assertEquals("PLACEHOLDER_ROUTING", opt.dataSource());
     }
 
     @Test

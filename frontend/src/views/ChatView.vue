@@ -10,6 +10,7 @@ import {
   recommendBudget,
   calculateDetailedBill,
   estimateTransport,
+  optimizeDayTransport,
   fetchBookingPlaceholders,
   type BudgetRecommendResponse,
   type DetailedBillResponse,
@@ -66,15 +67,22 @@ function scrollToPlanner() {
   document.getElementById('planner')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
+function defaultStartDate(): string {
+  const d = new Date()
+  d.setDate(d.getDate() + 1)
+  return d.toISOString().slice(0, 10)
+}
+
 const departureCity = ref('上海')
 const destination = ref('杭州')
+const startDate = ref(defaultStartDate())
 const days = ref(3)
 const budget = ref(3000)
 const travelers = ref(2)
 const travelStyle = ref('轻松漫游')
 const interests = ref(['美食', '人文'])
 
-// ─── 第一阶段商业闭环：当地物价预算推荐、六大类详细账单、距离交通与机酒占位 ───
+// ─── 第一/二阶段商业闭环：出发日期淡旺季预算、机酒选型实时联动账单、顺路重排 ───
 const budgetRec = ref<BudgetRecommendResponse | null>(null)
 const budgetRecLoading = ref(false)
 const showRecBreakdown = ref(false)
@@ -83,6 +91,7 @@ const transportPlan = ref<TransportEstimateResponse | null>(null)
 const bookingPlaceholders = ref<BookingPlaceholderResponse | null>(null)
 const selectedTransportOfferId = ref('')
 const selectedHotelOfferId = ref('')
+const optimizingDay = ref(false)
 
 const currentDayTransport = computed(() => transportPlan.value?.days?.[activeDay.value] || null)
 
@@ -113,6 +122,7 @@ async function loadBudgetRecommendation() {
     budgetRec.value = await recommendBudget({
       destination: destination.value.trim(),
       departureCity: departureCity.value.trim(),
+      startDate: startDate.value,
       days: days.value,
       travelers: travelers.value,
       travelStyle: travelStyle.value,
@@ -136,6 +146,86 @@ function applyRecommendedBudget() {
   ElMessage.success(`已采纳当地推荐预算 ¥${budgetRec.value.recommendedBudget.toLocaleString()}`)
 }
 
+async function recalculateBillWithSelection() {
+  if (!structuredDays.value.length) return
+  const flatActivities = structuredDays.value.flat().map((a: any) => ({
+    type: a.type || 'sightseeing',
+    name: a.name || '',
+    cost: normalizeOptionalCost(a.cost)
+  }))
+  const selectedTransport = bookingPlaceholders.value?.transportOptions?.find(
+    (o) => o.offerId === selectedTransportOfferId.value
+  )
+  const selectedHotel = bookingPlaceholders.value?.hotelOptions?.find(
+    (h) => h.offerId === selectedHotelOfferId.value
+  )
+  try {
+    detailedBill.value = await calculateDetailedBill({
+      destination: destination.value.trim(),
+      departureCity: departureCity.value.trim(),
+      startDate: startDate.value,
+      days: days.value,
+      travelers: travelers.value,
+      travelStyle: travelStyle.value,
+      userBudget: budget.value,
+      activities: flatActivities,
+      selectedTransportTotal: selectedTransport?.totalPrice,
+      selectedHotelTotal: selectedHotel?.totalPrice
+    })
+  } catch {
+    // ignore
+  }
+}
+
+function selectTransportOffer(offerId: string) {
+  selectedTransportOfferId.value = offerId
+  void recalculateBillWithSelection()
+}
+
+function selectHotelOffer(offerId: string) {
+  selectedHotelOfferId.value = offerId
+  void recalculateBillWithSelection()
+}
+
+async function optimizeCurrentDayRoute() {
+  const dayItems = structuredDays.value[activeDay.value]
+  if (!dayItems || dayItems.length <= 2 || optimizingDay.value) return
+  optimizingDay.value = true
+  try {
+    const res = await optimizeDayTransport({
+      destination: destination.value.trim(),
+      dayPlan: {
+        day: activeDay.value + 1,
+        stops: dayItems.map((a: any) => ({
+          name: a.name || '待定地点',
+          location: a.location || '',
+          type: a.type || 'sightseeing'
+        }))
+      }
+    })
+    if (res.reordered && res.optimizedStops?.length) {
+      const remaining = [...dayItems]
+      const reordered: any[] = []
+      for (const stop of res.optimizedStops) {
+        const idx = remaining.findIndex((item) => item.name === stop.name && (item.location || '') === (stop.location || ''))
+        if (idx >= 0) reordered.push(remaining.splice(idx, 1)[0])
+      }
+      reordered.push(...remaining)
+      structuredDays.value[activeDay.value] = reordered
+      if (transportPlan.value?.days) {
+        transportPlan.value.days[activeDay.value] = res.optimizedPlan
+      }
+      ElMessage.success(res.summary)
+    } else {
+      ElMessage.info(res.summary)
+    }
+  } catch {
+    ElMessage.error('顺路优化暂时不可用，请确认后端已启动')
+  } finally {
+    optimizingDay.value = false
+  }
+}
+
 async function loadPhase1Enrichment(dayItems: any[][]) {
   if (!dayItems.length) {
     detailedBill.value = null
@@ -143,11 +233,6 @@ async function loadPhase1Enrichment(dayItems: any[][]) {
     bookingPlaceholders.value = null
     return
   }
-  const flatActivities = dayItems.flat().map((a: any) => ({
-    type: a.type || 'sightseeing',
-    name: a.name || '',
-    cost: normalizeOptionalCost(a.cost)
-  }))
   const dayStops = dayItems.map((items, idx) => ({
     day: idx + 1,
     stops: items.map((a: any) => ({
@@ -157,16 +242,7 @@ async function loadPhase1Enrichment(dayItems: any[][]) {
     }))
   }))
 
-  const [billRes, transRes, bookRes] = await Promise.allSettled([
-    calculateDetailedBill({
-      destination: destination.value.trim(),
-      departureCity: departureCity.value.trim(),
-      days: days.value,
-      travelers: travelers.value,
-      travelStyle: travelStyle.value,
-      userBudget: budget.value,
-      activities: flatActivities
-    }),
+  const [transRes, bookRes] = await Promise.allSettled([
     estimateTransport({
       destination: destination.value.trim(),
       days: dayStops
@@ -174,6 +250,7 @@ async function loadPhase1Enrichment(dayItems: any[][]) {
     fetchBookingPlaceholders({
       departureCity: departureCity.value.trim(),
       destination: destination.value.trim(),
+      startDate: startDate.value,
       days: days.value,
       travelers: travelers.value,
       travelStyle: travelStyle.value,
@@ -181,20 +258,18 @@ async function loadPhase1Enrichment(dayItems: any[][]) {
     })
   ])
 
-  if (billRes.status === 'fulfilled') detailedBill.value = billRes.value
   if (transRes.status === 'fulfilled') transportPlan.value = transRes.value
   if (bookRes.status === 'fulfilled') {
     bookingPlaceholders.value = bookRes.value
-    if (!selectedTransportOfferId.value && bookRes.value.transportOptions?.length) {
-      selectedTransportOfferId.value = bookRes.value.transportOptions[0].offerId
-    }
-    if (!selectedHotelOfferId.value && bookRes.value.hotelOptions?.length) {
-      selectedHotelOfferId.value = bookRes.value.hotelOptions[1]?.offerId || bookRes.value.hotelOptions[0].offerId
-    }
+    const preferredTransport = bookRes.value.transportOptions?.find((o) => o.recommended) || bookRes.value.transportOptions?.[0]
+    if (preferredTransport) selectedTransportOfferId.value = preferredTransport.offerId
+    const preferredHotel = bookRes.value.hotelOptions?.[1] || bookRes.value.hotelOptions?.[0]
+    if (preferredHotel) selectedHotelOfferId.value = preferredHotel.offerId
   }
+  await recalculateBillWithSelection()
 }
 
-watch([departureCity, destination, days, travelers, travelStyle, budget], scheduleBudgetRec)
+watch([departureCity, destination, startDate, days, travelers, travelStyle, budget], scheduleBudgetRec)
 onMounted(() => { void loadBudgetRecommendation() })
 const travelPlan = ref<TravelPlan | null>(null)
 const activeDay = ref(0)
@@ -608,6 +683,10 @@ function getMealType(time: string): string {
           <input v-model="destination" maxlength="30" placeholder="例如：杭州" />
         </label>
         <label class="field">
+          <span>出发日期</span>
+          <input v-model="startDate" type="date" />
+        </label>
+        <label class="field">
           <span>旅行天数</span>
           <div class="number-control">
             <button type="button" @click="days = Math.max(1, days - 1)">−</button>
@@ -659,11 +738,14 @@ function getMealType(time: string): string {
         </div>
       </div>
 
-      <!-- 第一阶段：当地物价基准与智能预算推荐 -->
+      <!-- 第一/二阶段：当地物价基准与淡旺季智能预算推荐 -->
       <div v-if="budgetRec" class="budget-advisor">
         <div class="budget-advisor__top">
           <div class="budget-advisor__meta">
             <span class="advisor-tag">{{ budgetRec.tierLabel }}</span>
+            <span v-if="budgetRec.seasonLabel" class="advisor-season">
+              {{ budgetRec.travelMonth }}月{{ budgetRec.seasonLabel }} {{ budgetRec.seasonFactor }}x
+            </span>
             <span class="advisor-health" :class="budgetHealthMeta(budgetRec.budgetHealth).cls">
               {{ budgetHealthMeta(budgetRec.budgetHealth).label }}
             </span>
@@ -818,16 +900,16 @@ function getMealType(time: string): string {
           </div>
         </div>
 
-        <!-- 第一阶段：机票/高铁与酒店预订清单（占位） -->
+        <!-- 第二阶段：日期联动机票/高铁与酒店预订清单（占位，点击实时重算账单） -->
         <div v-if="bookingPlaceholders" class="booking-panel">
           <div class="booking-panel__head">
             <div>
-              <span class="decision-kicker">机酒预订清单 · 第一阶段占位</span>
-              <h4>{{ bookingPlaceholders.departureCity }} ⇄ {{ bookingPlaceholders.destination }} 配套方案</h4>
+              <span class="decision-kicker">机酒预订清单 · 点击切换实时重算账单</span>
+              <h4>{{ bookingPlaceholders.departureCity }} ⇄ {{ bookingPlaceholders.destination }}（{{ bookingPlaceholders.startDate }} ~ {{ bookingPlaceholders.endDate }}）</h4>
             </div>
             <span class="placeholder-badge">占位演示 · 未对接外部平台</span>
           </div>
-          <p class="booking-notice">{{ bookingPlaceholders.notice }}</p>
+          <p class="booking-notice">{{ bookingPlaceholders.transportAdvice }} {{ bookingPlaceholders.notice }}</p>
           <div class="booking-cols">
             <div class="booking-col">
               <h5>往返大交通（机票 / 高铁占位）</h5>
@@ -836,13 +918,13 @@ function getMealType(time: string): string {
                 :key="opt.offerId"
                 class="booking-card"
                 :class="{ active: selectedTransportOfferId === opt.offerId }"
-                @click="selectedTransportOfferId = opt.offerId"
+                @click="selectTransportOffer(opt.offerId)"
               >
                 <div class="booking-card__top">
                   <b>{{ opt.title }}</b>
                   <span class="booking-tag">{{ opt.tag }}</span>
                 </div>
-                <small>{{ opt.carrier }} · {{ opt.scheduleSummary }}</small>
+                <small>{{ opt.codeNo }} · 去程 {{ opt.outboundSchedule }} · 返程 {{ opt.returnSchedule }}（{{ opt.durationText }}）</small>
                 <div class="booking-card__foot">
                   <span>单人参考 ¥{{ opt.unitPrice.toLocaleString() }}</span>
                   <strong>合计 ¥{{ opt.totalPrice.toLocaleString() }}</strong>
@@ -856,13 +938,13 @@ function getMealType(time: string): string {
                 :key="hotel.offerId"
                 class="booking-card"
                 :class="{ active: selectedHotelOfferId === hotel.offerId }"
-                @click="selectedHotelOfferId = hotel.offerId"
+                @click="selectHotelOffer(hotel.offerId)"
               >
                 <div class="booking-card__top">
                   <b>{{ hotel.name }}</b>
                   <span class="booking-tag">★ {{ hotel.rating }}</span>
                 </div>
-                <small>{{ hotel.area }} · {{ hotel.roomType }}</small>
+                <small>{{ hotel.checkInDate }} ~ {{ hotel.checkOutDate }} · 距核心区约 {{ hotel.distanceToCenterKm }} km · {{ hotel.roomType }}</small>
                 <div class="booking-card__foot">
                   <span>¥{{ hotel.pricePerNight }}/晚 × {{ hotel.nights }}晚 × {{ hotel.rooms }}间</span>
                   <strong>合计 ¥{{ hotel.totalPrice.toLocaleString() }}</strong>
@@ -898,6 +980,15 @@ function getMealType(time: string): string {
                 <span>🗺</span>
                 <span>当日通勤约 {{ currentDayTransport.totalDistanceKm }} km · {{ currentDayTransport.totalDurationMinutes }} 分钟 · 交通约 ¥{{ currentDayTransport.totalTransitCost }}</span>
               </div>
+              <button
+                v-if="(structuredDays[activeDay]?.length || 0) > 2"
+                type="button"
+                class="optimize-route-btn"
+                :disabled="optimizingDay"
+                @click="optimizeCurrentDayRoute"
+              >
+                {{ optimizingDay ? '优化中…' : '✦ 一键顺路优化' }}
+              </button>
             </div>
             <div v-if="currentDayTransport?.routeWarning" class="route-warning">
               ⚠️ {{ currentDayTransport.routeWarning }}
@@ -1147,7 +1238,7 @@ function getMealType(time: string): string {
 
 .form-grid {
   display: grid;
-  grid-template-columns: 1.1fr 1.2fr repeat(3, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 12px;
   margin: 20px 0;
 }
@@ -2116,6 +2207,28 @@ function getMealType(time: string): string {
   background: #e8f0fe;
   padding: 2px 9px;
   border-radius: 999px;
+}
+.advisor-season {
+  font-size: 11px;
+  font-weight: 600;
+  color: #3c4043;
+  background: #ffffff;
+  border: 1px solid #e2e7ee;
+  padding: 2px 9px;
+  border-radius: 999px;
+}
+.optimize-route-btn {
+  border: 1px solid #c2d7fa;
+  background: #ffffff;
+  color: #0b57d0;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  &:hover:not(:disabled) { background: #e8f0fe; }
+  &:disabled { opacity: 0.6; cursor: not-allowed; }
 }
 .advisor-health {
   font-size: 11px;

@@ -13,8 +13,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 第一阶段商业闭环规划接口：
- * 提供城市物价预算推荐、六大类明细账单核算、景点间距离与交通规划占位、机酒供给占位。
+ * 第一/二阶段商业闭环规划接口：
+ * 提供城市物价与日期淡旺季预算推荐、机酒联动详细账单核算、距离与交通规划、单日顺路重排、机酒占位方案。
  */
 @RestController
 @RequestMapping("/api/planning")
@@ -28,6 +28,7 @@ public class CommercialPlanningController {
         return planningService.recommendBudget(
                 req.destination(),
                 req.departureCity(),
+                req.startDate(),
                 req.days() != null ? req.days() : 3,
                 req.travelers() != null ? req.travelers() : 2,
                 req.travelStyle(),
@@ -41,11 +42,14 @@ public class CommercialPlanningController {
         return planningService.calculateDetailedBill(
                 req.destination(),
                 req.departureCity(),
+                req.startDate(),
                 req.days() != null ? req.days() : 3,
                 req.travelers() != null ? req.travelers() : 2,
                 req.travelStyle(),
                 req.userBudget() != null ? req.userBudget() : 3000.0,
-                req.activities()
+                req.activities(),
+                req.selectedTransportTotal(),
+                req.selectedHotelTotal()
         );
     }
 
@@ -54,11 +58,17 @@ public class CommercialPlanningController {
         return planningService.estimateTransport(req.destination(), req.days());
     }
 
+    @PostMapping("/transport/optimize")
+    public TransportRoutingProvider.RouteOptimizationResult optimizeDayTransport(@RequestBody OptimizeDayRequest req) {
+        return planningService.optimizeDayTransport(req.destination(), req.dayPlan());
+    }
+
     @PostMapping("/booking/placeholders")
     public BookingSupplyProvider.BookingPlaceholderResult bookingPlaceholders(@RequestBody BookingPlaceholderRequest req) {
         return planningService.getBookingPlaceholders(
                 req.departureCity(),
                 req.destination(),
+                req.startDate(),
                 req.days() != null ? req.days() : 3,
                 req.travelers() != null ? req.travelers() : 2,
                 req.travelStyle(),
@@ -69,6 +79,7 @@ public class CommercialPlanningController {
     public record BudgetRecommendRequest(
             String destination,
             String departureCity,
+            String startDate,
             Integer days,
             Integer travelers,
             String travelStyle,
@@ -79,11 +90,14 @@ public class CommercialPlanningController {
     public record DetailedBillRequest(
             String destination,
             String departureCity,
+            String startDate,
             Integer days,
             Integer travelers,
             String travelStyle,
             Double userBudget,
-            List<Map<String, Object>> activities
+            List<Map<String, Object>> activities,
+            Integer selectedTransportTotal,
+            Integer selectedHotelTotal
     ) {}
 
     public record TransportEstimateRequest(
@@ -91,9 +105,15 @@ public class CommercialPlanningController {
             List<TransportRoutingProvider.DayStopsInput> days
     ) {}
 
+    public record OptimizeDayRequest(
+            String destination,
+            TransportRoutingProvider.DayStopsInput dayPlan
+    ) {}
+
     public record BookingPlaceholderRequest(
             String departureCity,
             String destination,
+            String startDate,
             Integer days,
             Integer travelers,
             String travelStyle,

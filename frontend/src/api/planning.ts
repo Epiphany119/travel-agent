@@ -12,6 +12,10 @@ export interface BudgetCategoryItem {
 export interface BudgetRecommendResponse {
   destination: string
   departureCity: string
+  startDate: string
+  endDate: string
+  travelMonth: number
+  seasonLabel: string
   cityTier: string
   tierLabel: string
   days: number
@@ -32,6 +36,8 @@ export interface BudgetRecommendResponse {
 
 export interface DetailedBillResponse {
   destination: string
+  startDate: string
+  endDate: string
   userBudget: number
   totalEstimatedCost: number
   deltaFromBudget: number
@@ -73,15 +79,32 @@ export interface TransportEstimateResponse {
   days: DayTransportPlan[]
 }
 
+export interface RouteOptimizationResponse {
+  day: number
+  reordered: boolean
+  originalDistanceKm: number
+  optimizedDistanceKm: number
+  savedMinutes: number
+  summary: string
+  optimizedStops: Array<{ name: string; location?: string; type?: string }>
+  optimizedPlan: DayTransportPlan
+  dataSource: string
+}
+
 export interface TransportOffer {
   offerId: string
   category: string
   title: string
   carrier: string
+  codeNo: string
+  outboundSchedule: string
+  returnSchedule: string
+  durationText: string
   scheduleSummary: string
   unitPrice: number
   totalPrice: number
   tag: string
+  recommended: boolean
   bookingStatus: string
   dataSource: string
 }
@@ -91,6 +114,9 @@ export interface HotelOffer {
   name: string
   area: string
   roomType: string
+  checkInDate: string
+  checkOutDate: string
+  distanceToCenterKm: number
   nights: number
   rooms: number
   pricePerNight: number
@@ -104,6 +130,9 @@ export interface HotelOffer {
 export interface BookingPlaceholderResponse {
   departureCity: string
   destination: string
+  startDate: string
+  endDate: string
+  transportAdvice: string
   transportOptions: TransportOffer[]
   hotelOptions: HotelOffer[]
   notice: string
@@ -113,6 +142,7 @@ export interface BookingPlaceholderResponse {
 export function recommendBudget(params: {
   destination: string
   departureCity?: string
+  startDate?: string
   days: number
   travelers: number
   travelStyle?: string
@@ -125,11 +155,14 @@ export function recommendBudget(params: {
 export function calculateDetailedBill(params: {
   destination: string
   departureCity?: string
+  startDate?: string
   days: number
   travelers: number
   travelStyle?: string
   userBudget: number
   activities: Array<{ type?: string; name?: string; cost?: number | null }>
+  selectedTransportTotal?: number
+  selectedHotelTotal?: number
 }): Promise<DetailedBillResponse> {
   return request.post<any, DetailedBillResponse>('/planning/bill/calculate', params)
 }
@@ -144,9 +177,20 @@ export function estimateTransport(params: {
   return request.post<any, TransportEstimateResponse>('/planning/transport/estimate', params)
 }
 
+export function optimizeDayTransport(params: {
+  destination: string
+  dayPlan: {
+    day: number
+    stops: Array<{ name: string; location?: string; type?: string }>
+  }
+}): Promise<RouteOptimizationResponse> {
+  return request.post<any, RouteOptimizationResponse>('/planning/transport/optimize', params)
+}
+
 export function fetchBookingPlaceholders(params: {
   departureCity?: string
   destination: string
+  startDate?: string
   days: number
   travelers: number
   travelStyle?: string

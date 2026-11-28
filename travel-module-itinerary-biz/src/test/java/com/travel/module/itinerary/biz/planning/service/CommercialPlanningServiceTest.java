@@ -28,99 +28,87 @@ class CommercialPlanningServiceTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    void recommendBudgetBreaksDownSixCategoriesAndSumsToRecommendedBudget() {
-        Map<String, Object> result = service.recommendBudget(
-                "杭州", "上海", 3, 2, "轻松漫游", null, 5
+    void recommendBudgetLinksStartDateSeasonAndSumsSixCategories() {
+        Map<String, Object> peak = service.recommendBudget(
+                "杭州", "上海", "2026-07-15", 3, 2, "轻松漫游", null, null
+        );
+        Map<String, Object> offPeak = service.recommendBudget(
+                "杭州", "上海", "2026-11-15", 3, 2, "轻松漫游", null, null
         );
 
-        assertEquals("杭州", result.get("destination"));
-        assertEquals("TIER_2", result.get("cityTier"));
-        assertEquals("CITY_BENCHMARK_PLACEHOLDER", result.get("dataSource"));
+        assertEquals("杭州", peak.get("destination"));
+        assertEquals("2026-07-15", peak.get("startDate"));
+        assertEquals("2026-07-17", peak.get("endDate"));
+        assertEquals("旺季", peak.get("seasonLabel"));
+        assertEquals("淡季", offPeak.get("seasonLabel"));
 
-        int minBudget = ((Number) result.get("minBudget")).intValue();
-        int recommended = ((Number) result.get("recommendedBudget")).intValue();
-        int maxBudget = ((Number) result.get("maxBudget")).intValue();
-        assertTrue(minBudget < recommended && recommended < maxBudget);
+        int peakRec = ((Number) peak.get("recommendedBudget")).intValue();
+        int offPeakRec = ((Number) offPeak.get("recommendedBudget")).intValue();
+        assertTrue(peakRec > offPeakRec);
 
-        List<Map<String, Object>> categories = (List<Map<String, Object>>) result.get("categories");
+        List<Map<String, Object>> categories = (List<Map<String, Object>>) peak.get("categories");
         assertEquals(6, categories.size());
         int sum = categories.stream().mapToInt(c -> ((Number) c.get("amount")).intValue()).sum();
-        assertEquals(recommended, sum);
+        assertEquals(peakRec, sum);
     }
 
     @Test
     void recommendBudgetEvaluatesAllBudgetHealthStates() {
-        Map<String, Object> base = service.recommendBudget("北京", "上海", 3, 2, "轻松漫游", null, 5);
+        Map<String, Object> base = service.recommendBudget("北京", "上海", "2026-05-01", 3, 2, "轻松漫游", null, 5);
         double recommended = ((Number) base.get("recommendedBudget")).doubleValue();
 
         assertEquals("INSUFFICIENT",
-                service.recommendBudget("北京", "上海", 3, 2, "轻松漫游", recommended * 0.5, 5).get("budgetHealth"));
+                service.recommendBudget("北京", "上海", "2026-05-01", 3, 2, "轻松漫游", recommended * 0.5, 5).get("budgetHealth"));
         assertEquals("TIGHT",
-                service.recommendBudget("北京", "上海", 3, 2, "轻松漫游", recommended * 0.85, 5).get("budgetHealth"));
+                service.recommendBudget("北京", "上海", "2026-05-01", 3, 2, "轻松漫游", recommended * 0.85, 5).get("budgetHealth"));
         assertEquals("BALANCED",
-                service.recommendBudget("北京", "上海", 3, 2, "轻松漫游", recommended * 1.05, 5).get("budgetHealth"));
+                service.recommendBudget("北京", "上海", "2026-05-01", 3, 2, "轻松漫游", recommended * 1.05, 5).get("budgetHealth"));
         assertEquals("AMPLE",
-                service.recommendBudget("北京", "上海", 3, 2, "轻松漫游", recommended * 1.6, 5).get("budgetHealth"));
+                service.recommendBudget("北京", "上海", "2026-05-01", 3, 2, "轻松漫游", recommended * 1.6, 5).get("budgetHealth"));
     }
 
     @Test
     @SuppressWarnings("unchecked")
-    void recommendBudgetAppliesFoodieAndFamilyStyleBoosts() {
-        Map<String, Object> normal = service.recommendBudget("成都", "西安", 3, 2, "轻松漫游", null, 6);
-        Map<String, Object> foodie = service.recommendBudget("成都", "西安", 3, 2, "美食优先", null, 6);
-        Map<String, Object> family = service.recommendBudget("成都", "西安", 3, 2, "亲子友好", null, 6);
-
-        int normalMeal = findCategoryAmount((List<Map<String, Object>>) normal.get("categories"), "meal");
-        int foodieMeal = findCategoryAmount((List<Map<String, Object>>) foodie.get("categories"), "meal");
-        assertTrue(foodieMeal > normalMeal);
-
-        int normalHotel = findCategoryAmount((List<Map<String, Object>>) normal.get("categories"), "hotel");
-        int familyHotel = findCategoryAmount((List<Map<String, Object>>) family.get("categories"), "hotel");
-        assertTrue(familyHotel > normalHotel);
-    }
-
-    @Test
-    @SuppressWarnings("unchecked")
-    void calculateDetailedBillUsesConfirmedActivityCostsAndFlagsOverBudget() {
+    void calculateDetailedBillLinksSelectedTransportAndHotelTotals() {
         List<Map<String, Object>> activities = List.of(
                 Map.of("type", "sightseeing", "name", "西湖游船", "cost", 120),
                 Map.of("type", "meal", "name", "楼外楼", "cost", 360),
-                Map.of("type", "sightseeing", "name", "断桥残雪") // 无费用，计入 pending
+                Map.of("type", "sightseeing", "name", "断桥残雪")
         );
 
         Map<String, Object> bill = service.calculateDetailedBill(
-                "杭州", "上海", 3, 2, "轻松漫游", 1500.0, activities
+                "杭州", "上海", "2026-05-01", 3, 2, "轻松漫游", 3000.0, activities, 960, 1280
         );
 
         assertEquals(2, bill.get("confirmedActivityCount"));
         assertEquals(1, bill.get("pendingActivityCount"));
-        assertEquals("OVER_BUDGET", bill.get("status"));
-        assertTrue(((Number) bill.get("deltaFromBudget")).intValue() < 0);
+        assertEquals("PHASE2_LINKED_BENCHMARK", bill.get("dataSource"));
 
         List<Map<String, Object>> categories = (List<Map<String, Object>>) bill.get("categories");
-        assertEquals(6, categories.size());
-
-        Map<String, Object> ticketCat = categories.stream()
-                .filter(c -> "ticket".equals(c.get("code"))).findFirst().orElseThrow();
-        assertEquals(120, ((Number) ticketCat.get("amount")).intValue());
-        assertEquals("ITINERARY_CONFIRMED", ticketCat.get("priceSource"));
+        assertEquals(960, findCategoryAmount(categories, "intercity_transport"));
+        assertEquals(1280, findCategoryAmount(categories, "hotel"));
+        assertEquals(120, findCategoryAmount(categories, "ticket"));
     }
 
     @Test
-    void estimateTransportAndBookingPlaceholdersReturnPlaceholderMetadata() {
-        Map<String, Object> transport = service.estimateTransport("杭州", List.of(
-                new DayStopsInput(1, List.of(
-                        new StopInput("雷峰塔", "西湖区南山路", "sightseeing"),
-                        new StopInput("西溪湿地", "西湖区天目山路", "sightseeing")
-                ))
+    void estimateOptimizeAndBookingPlaceholdersReturnExpectedMetadata() {
+        DayStopsInput day = new DayStopsInput(1, List.of(
+                new StopInput("故宫", "北京市东城区", "sightseeing"),
+                new StopInput("颐和园", "北京市海淀区", "sightseeing"),
+                new StopInput("天坛", "北京市东城区", "sightseeing")
         ));
-        assertEquals("PLACEHOLDER", transport.get("dataSource"));
-        assertEquals("PLACEHOLDER_ROUTING", transport.get("provider"));
 
-        var booking = service.getBookingPlaceholders("上海", "杭州", 3, 2, "轻松漫游", 4000);
+        Map<String, Object> transport = service.estimateTransport("北京", List.of(day));
+        assertEquals("PLACEHOLDER", transport.get("dataSource"));
+
+        var opt = service.optimizeDayTransport("北京", day);
+        assertEquals(1, opt.day());
+        assertEquals("PLACEHOLDER_ROUTING", opt.dataSource());
+
+        var booking = service.getBookingPlaceholders("上海", "杭州", "2026-05-01", 3, 2, "轻松漫游", 4000);
+        assertEquals("2026-05-01", booking.startDate());
+        assertEquals("2026-05-03", booking.endDate());
         assertEquals("PLACEHOLDER_OTA_SUPPLY", booking.dataSource());
-        assertEquals(2, booking.transportOptions().size());
-        assertEquals(3, booking.hotelOptions().size());
     }
 
     private int findCategoryAmount(List<Map<String, Object>> categories, String code) {

@@ -1,14 +1,192 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 import { useAgentSessionStore } from '@/stores/agentSession'
 import { addInspiration, getCurrentUserId } from '@/api/user'
 import { fetchItineraryWeather } from '@/api/weather'
-import { formatCost } from '@/utils/planValues'
+import {
+  calculateDetailedBill,
+  estimateTransport,
+  optimizeDayTransport,
+  fetchBookingPlaceholders,
+  type DetailedBillResponse,
+  type TransportEstimateResponse,
+  type BookingPlaceholderResponse
+} from '@/api/planning'
+import { formatCost, normalizeOptionalCost } from '@/utils/planValues'
+
 const agent = useAgentSessionStore()
 
 const savingInspiration = ref(false)
 const savedInspiration = ref(false)
 const weatherLoading = ref(false)
+
+// ─── 第一/二阶段能力：出发地/日期联动、六大类账单、机酒占位选型与交通规划 ───
+function defaultStartDate(): string {
+  const fromPlan = agent.plan?.dayPlans?.find((d: any) => d?.date)?.date
+  if (fromPlan) return String(fromPlan).slice(0, 10)
+  const d = new Date()
+  d.setDate(d.getDate() + 1)
+  return d.toISOString().slice(0, 10)
+}
+
+const departureCity = ref('上海')
+const startDate = ref(defaultStartDate())
+const detailedBill = ref<DetailedBillResponse | null>(null)
+const transportPlan = ref<TransportEstimateResponse | null>(null)
+const bookingPlaceholders = ref<BookingPlaceholderResponse | null>(null)
+const selectedTransportOfferId = ref('')
+const selectedHotelOfferId = ref('')
+const optimizingDay = ref(false)
+
+const currentDayTransport = computed(() => transportPlan.value?.days?.[agent.activeDay] || null)
+
+function priceSourceLabel(source?: string) {
+  switch (source) {
+    case 'ITINERARY_CONFIRMED': return '行程核验'
+    case 'PLACEHOLDER_QUOTE': return '占位报价'
+    case 'PLACEHOLDER_ROUTING': return '路径占位'
+    default: return '物价基准'
+  }
+}
+
+async function recalculateBillWithSelection() {
+  if (!agent.plan?.dayPlans?.length) return
+  const flatActivities = agent.plan.dayPlans.flatMap((d: any) =>
+    (d.activities || []).map((a: any) => ({
+      type: a.type || 'sightseeing',
+      name: a.name || '',
+      cost: normalizeOptionalCost(a.cost)
+    }))
+  )
+  const selectedTransport = bookingPlaceholders.value?.transportOptions?.find(
+    (o) => o.offerId === selectedTransportOfferId.value
+  )
+  const selectedHotel = bookingPlaceholders.value?.hotelOptions?.find(
+    (h) => h.offerId === selectedHotelOfferId.value
+  )
+  try {
+    detailedBill.value = await calculateDetailedBill({
+      destination: agent.plan.destination || '',
+      departureCity: departureCity.value.trim(),
+      startDate: startDate.value,
+      days: agent.plan.days || agent.plan.dayPlans.length,
+      travelers: 1,
+      travelStyle: agent.answers?.madeAt || '轻松漫游',
+      userBudget: Number(agent.plan.budget || 3000),
+      activities: flatActivities,
+      selectedTransportTotal: selectedTransport?.totalPrice,
+      selectedHotelTotal: selectedHotel?.totalPrice
+    })
+  } catch {
+    // 后端未重启时静默跳过
+  }
+}
+
+async function loadEnrichment() {
+  if (!agent.plan?.dayPlans?.length) {
+    detailedBill.value = null
+    transportPlan.value = null
+    bookingPlaceholders.value = null
+    return
+  }
+  const dest = agent.plan.destination || ''
+  const dayStops = agent.plan.dayPlans.map((d: any, idx: number) => ({
+    day: Number(d.day || idx + 1),
+    stops: (d.activities || []).map((a: any) => ({
+      name: a.name || '待定地点',
+      location: a.location || '',
+      type: a.type || 'sightseeing'
+    }))
+  }))
+
+  const [transRes, bookRes] = await Promise.allSettled([
+    estimateTransport({ destination: dest, days: dayStops }),
+    fetchBookingPlaceholders({
+      departureCity: departureCity.value.trim(),
+      destination: dest,
+      startDate: startDate.value,
+      days: agent.plan.days || agent.plan.dayPlans.length,
+      travelers: 1,
+      travelStyle: agent.answers?.madeAt || '轻松漫游',
+      budget: Number(agent.plan.budget || 3000)
+    })
+  ])
+
+  if (transRes.status === 'fulfilled') transportPlan.value = transRes.value
+  if (bookRes.status === 'fulfilled') {
+    bookingPlaceholders.value = bookRes.value
+    const preferredTransport = bookRes.value.transportOptions?.find((o) => o.recommended) || bookRes.value.transportOptions?.[0]
+    if (preferredTransport) selectedTransportOfferId.value = preferredTransport.offerId
+    const preferredHotel = bookRes.value.hotelOptions?.[1] || bookRes.value.hotelOptions?.[0]
+    if (preferredHotel) selectedHotelOfferId.value = preferredHotel.offerId
+  }
+  await recalculateBillWithSelection()
+}
+
+function selectTransportOffer(offerId: string) {
+  selectedTransportOfferId.value = offerId
+  void recalculateBillWithSelection()
+}
+
+function selectHotelOffer(offerId: string) {
+  selectedHotelOfferId.value = offerId
+  void recalculateBillWithSelection()
+}
+
+async function optimizeCurrentDayRoute() {
+  const dayObj = agent.plan?.dayPlans?.[agent.activeDay]
+  const activities = dayObj?.activities || []
+  if (activities.length <= 2 || optimizingDay.value) return
+  optimizingDay.value = true
+  try {
+    const res = await optimizeDayTransport({
+      destination: agent.plan.destination || '',
+      dayPlan: {
+        day: Number(dayObj.day || agent.activeDay + 1),
+        stops: activities.map((a: any) => ({
+          name: a.name || '待定地点',
+          location: a.location || '',
+          type: a.type || 'sightseeing'
+        }))
+      }
+    })
+    if (res.reordered && res.optimizedStops?.length) {
+      const remaining = [...activities]
+      const reordered: any[] = []
+      for (const stop of res.optimizedStops) {
+        const idx = remaining.findIndex((item) => item.name === stop.name && (item.location || '') === (stop.location || ''))
+        if (idx >= 0) reordered.push(remaining.splice(idx, 1)[0])
+      }
+      reordered.push(...remaining)
+      dayObj.activities = reordered
+      if (transportPlan.value?.days) {
+        transportPlan.value.days[agent.activeDay] = res.optimizedPlan
+      }
+      ElMessage.success(res.summary)
+    } else {
+      ElMessage.info(res.summary)
+    }
+  } catch {
+    ElMessage.error('顺路优化暂时不可用，请确认后端已启动')
+  } finally {
+    optimizingDay.value = false
+  }
+}
+
+watch(() => agent.plan, (nextPlan) => {
+  if (nextPlan) {
+    startDate.value = defaultStartDate()
+    void loadEnrichment()
+  }
+}, { immediate: true })
+
+let refreshTimer: number | null = null
+watch([departureCity, startDate], () => {
+  if (!agent.plan) return
+  if (refreshTimer) window.clearTimeout(refreshTimer)
+  refreshTimer = window.setTimeout(() => { void loadEnrichment() }, 280)
+})
 
 async function savePlanAsInspiration() {
   if (!agent.plan || savingInspiration.value) return
@@ -22,7 +200,6 @@ async function savePlanAsInspiration() {
       quote: `${agent.plan.days || agent.dayTabs.length} 天 · ${agent.verifiedPlanCost == null ? '费用待确认' : `已核验费用下限 ${formatCost(agent.verifiedPlanCost)}`}`,
       description: agent.overview || 'Roamly AI 为你生成的旅行计划',
       tags: 'AI规划,旅行计划',
-      // agent.plan.budget 是用户输入的预算上限，不是系统核验出的预计花费。
       estimatedBudget: agent.verifiedPlanCost,
       status: 0,
       priority: 1,
@@ -36,10 +213,9 @@ async function refreshWeather() {
   if (!agent.plan || weatherLoading.value) return
   weatherLoading.value = true
   try {
-    const startDate = agent.plan.dayPlans?.find((d: any) => d?.date)?.date
     const weather = await fetchItineraryWeather(
       agent.plan.destination,
-      startDate,
+      startDate.value,
       Math.max(agent.plan.dayPlans?.length || 3, 3),
     )
     if (weather) agent.plan.weather = weather
@@ -74,6 +250,101 @@ async function refreshWeather() {
       </div>
     </div>
 
+    <!-- 出发城市与出发日期快捷联动条 -->
+    <div class="trip-context-bar">
+      <label class="ctx-field">
+        <span>出发城市</span>
+        <input v-model="departureCity" maxlength="20" placeholder="例如：上海" />
+      </label>
+      <label class="ctx-field">
+        <span>出发日期</span>
+        <input v-model="startDate" type="date" />
+      </label>
+      <span class="ctx-note">修改出发地或日期将自动同步淡旺季系数、机酒方案与详细账单</span>
+    </div>
+
+    <!-- 六大类详细账单核算 -->
+    <div v-if="detailedBill" class="bill-panel">
+      <div class="bill-panel__head">
+        <div>
+          <span class="section-kicker">六大类详细账单核算</span>
+          <h4>预计总花费 ¥{{ detailedBill.totalEstimatedCost.toLocaleString() }}</h4>
+          <small>人均 ¥{{ detailedBill.perPersonCost.toLocaleString() }} · 日均 ¥{{ detailedBill.perDayCost.toLocaleString() }} · 预算使用率 {{ detailedBill.utilizationRate }}%</small>
+        </div>
+        <span class="bill-status" :class="'bill-status--' + detailedBill.status.toLowerCase()">
+          {{ detailedBill.status === 'OVER_BUDGET' ? '超出预算 ¥' + Math.abs(detailedBill.deltaFromBudget).toLocaleString() : '预算结余 ¥' + Math.max(0, detailedBill.deltaFromBudget).toLocaleString() }}
+        </span>
+      </div>
+      <div class="bill-grid">
+        <div v-for="cat in detailedBill.categories" :key="cat.code" class="bill-item">
+          <div class="bill-item__top">
+            <b>{{ cat.label }}</b>
+            <span class="source-pill">{{ priceSourceLabel(cat.priceSource) }}</span>
+          </div>
+          <div class="bill-item__val">
+            <strong>¥{{ cat.amount.toLocaleString() }}</strong>
+            <span>{{ cat.ratio }}%</span>
+          </div>
+          <div class="bill-bar"><i :style="{ width: Math.min(100, cat.ratio) + '%' }"></i></div>
+          <small>{{ cat.note }}</small>
+        </div>
+      </div>
+    </div>
+
+    <!-- 日期联动机酒占位预订清单 -->
+    <div v-if="bookingPlaceholders" class="booking-panel">
+      <div class="booking-panel__head">
+        <div>
+          <span class="section-kicker">机酒预订清单 · 点击切换实时重算账单</span>
+          <h4>{{ bookingPlaceholders.departureCity }} ⇄ {{ bookingPlaceholders.destination }}（{{ bookingPlaceholders.startDate }} ~ {{ bookingPlaceholders.endDate }}）</h4>
+        </div>
+        <span class="placeholder-badge">占位演示 · 未对接外部平台</span>
+      </div>
+      <p class="booking-notice">{{ bookingPlaceholders.transportAdvice }}</p>
+      <div class="booking-cols">
+        <div class="booking-col">
+          <h5>往返大交通（高铁 / 机票占位）</h5>
+          <div
+            v-for="opt in bookingPlaceholders.transportOptions"
+            :key="opt.offerId"
+            class="booking-card"
+            :class="{ active: selectedTransportOfferId === opt.offerId }"
+            @click="selectTransportOffer(opt.offerId)"
+          >
+            <div class="booking-card__top">
+              <b>{{ opt.title }}</b>
+              <span class="booking-tag">{{ opt.tag }}</span>
+            </div>
+            <small>{{ opt.codeNo }} · 去程 {{ opt.outboundSchedule }} · 返程 {{ opt.returnSchedule }}</small>
+            <div class="booking-card__foot">
+              <span>单人 ¥{{ opt.unitPrice.toLocaleString() }}</span>
+              <strong>合计 ¥{{ opt.totalPrice.toLocaleString() }}</strong>
+            </div>
+          </div>
+        </div>
+        <div class="booking-col">
+          <h5>推荐住宿（商圈酒店占位）</h5>
+          <div
+            v-for="hotel in bookingPlaceholders.hotelOptions"
+            :key="hotel.offerId"
+            class="booking-card"
+            :class="{ active: selectedHotelOfferId === hotel.offerId }"
+            @click="selectHotelOffer(hotel.offerId)"
+          >
+            <div class="booking-card__top">
+              <b>{{ hotel.name }}</b>
+              <span class="booking-tag">★ {{ hotel.rating }}</span>
+            </div>
+            <small>{{ hotel.checkInDate }} ~ {{ hotel.checkOutDate }} · 距核心区约 {{ hotel.distanceToCenterKm }} km</small>
+            <div class="booking-card__foot">
+              <span>¥{{ hotel.pricePerNight }}/晚 × {{ hotel.nights }}晚</span>
+              <strong>合计 ¥{{ hotel.totalPrice.toLocaleString() }}</strong>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div v-if="agent.dayTabs.length > 0" class="day-tabs">
       <div class="tab-bar">
         <button
@@ -89,11 +360,28 @@ async function refreshWeather() {
       </div>
       <div class="tab-content">
         <div v-if="agent.dayTabs[agent.activeDay]" class="day-detail">
-          <div v-if="agent.dayTabs[agent.activeDay].weather" class="day-weather-row">
-            <div v-if="agent.dayTabs[agent.activeDay].weather.text" class="weather-chip"><span>{{ agent.dayTabs[agent.activeDay].weather.icon }}</span><span>{{ agent.dayTabs[agent.activeDay].weather.text }}</span></div>
-            <div v-if="agent.dayTabs[agent.activeDay].weather.tempMin != null || agent.dayTabs[agent.activeDay].weather.tempMax != null" class="weather-chip"><span>🌡️</span><span>{{ agent.dayTabs[agent.activeDay].weather.tempMin ?? '--' }} ~ {{ agent.dayTabs[agent.activeDay].weather.tempMax ?? '--' }}℃</span></div>
+          <div class="day-weather-row">
+            <div v-if="agent.dayTabs[agent.activeDay].weather?.text" class="weather-chip"><span>{{ agent.dayTabs[agent.activeDay].weather.icon }}</span><span>{{ agent.dayTabs[agent.activeDay].weather.text }}</span></div>
+            <div v-if="agent.dayTabs[agent.activeDay].weather && (agent.dayTabs[agent.activeDay].weather.tempMin != null || agent.dayTabs[agent.activeDay].weather.tempMax != null)" class="weather-chip"><span>🌡️</span><span>{{ agent.dayTabs[agent.activeDay].weather.tempMin ?? '--' }} ~ {{ agent.dayTabs[agent.activeDay].weather.tempMax ?? '--' }}℃</span></div>
             <div v-if="agent.dayTabs[agent.activeDay].budget != null" class="weather-chip budget-chip"><span>💰</span><span>¥{{ agent.dayTabs[agent.activeDay].budget }}</span></div>
+            <div v-if="currentDayTransport" class="weather-chip">
+              <span>🗺</span>
+              <span>当日通勤约 {{ currentDayTransport.totalDistanceKm }} km · {{ currentDayTransport.totalDurationMinutes }} 分钟 · 约 ¥{{ currentDayTransport.totalTransitCost }}</span>
+            </div>
+            <button
+              v-if="agent.currentActivities.length > 2"
+              type="button"
+              class="optimize-route-btn"
+              :disabled="optimizingDay"
+              @click="optimizeCurrentDayRoute"
+            >
+              {{ optimizingDay ? '优化中…' : '✦ 一键顺路优化' }}
+            </button>
           </div>
+          <div v-if="currentDayTransport?.routeWarning" class="route-warning">
+            ⚠️ {{ currentDayTransport.routeWarning }}
+          </div>
+
           <div v-if="agent.currentActivities.length" class="activity-cards">
             <article v-for="(activity, ai) in agent.currentActivities" :key="ai" class="activity-card" :class="{ 'has-image': !!agent.imageMap[activity.name]?.length }">
               <div class="activity-card-media">
@@ -108,16 +396,25 @@ async function refreshWeather() {
               </div>
             </article>
           </div>
+
+          <!-- 当日相邻景点距离与交通规划明细 -->
+          <div v-if="currentDayTransport?.segments?.length" class="transit-list">
+            <div class="transit-list__title">当日景点间距离与交通规划（占位估算）</div>
+            <div v-for="(seg, si) in currentDayTransport.segments" :key="si" class="transit-row">
+              <span class="transit-route">{{ seg.fromName }} → {{ seg.toName }}</span>
+              <span class="transit-mode">{{ seg.recommendedMode }}</span>
+              <span>约 {{ seg.distanceKm }} km · {{ seg.durationMinutes }} 分钟 · 预计 ¥{{ seg.estimatedFare }}</span>
+            </div>
+          </div>
+
           <div v-if="agent.dayTabs[agent.activeDay].html" class="plan-md" v-html="agent.dayTabs[agent.activeDay].html"></div>
         </div>
       </div>
     </div>
 
-    <!-- 底部详细总结：按 activeDay 切，和 tab 对齐 -->
     <div v-if="agent.dayOverview" class="plan-detail">
       <div class="plan-detail-inner" v-html="agent.renderMarkdown(agent.dayOverview)"></div>
     </div>
-    <!-- 兜底：如果 dayOverview 为空但 overview 有内容，显示完整总览（不太可能发生） -->
     <div v-else-if="agent.overview" class="plan-detail">
       <div class="plan-detail-inner" v-html="agent.renderMarkdown(agent.overview)"></div>
     </div>
@@ -168,6 +465,223 @@ async function refreshWeather() {
   gap: 10px;
   margin-left: auto;
   flex-shrink: 0;
+}
+
+.trip-context-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid #E5E9F0;
+  border-radius: 14px;
+  background: #FFFFFF;
+}
+
+.ctx-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: #F8FAFD;
+  border: 1px solid #E2E7EE;
+  border-radius: 10px;
+  padding: 5px 10px;
+
+  span {
+    font-size: 11.5px;
+    font-weight: 600;
+    color: #5F6368;
+    white-space: nowrap;
+  }
+
+  input {
+    border: 0;
+    background: transparent;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: #1F2329;
+    outline: none;
+    width: 118px;
+  }
+}
+
+.ctx-note {
+  font-size: 11.5px;
+  color: #80868B;
+}
+
+.section-kicker {
+  color: #0B57D0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.bill-panel,
+.booking-panel {
+  padding: 14px 16px;
+  border: 1px solid #E5E9F0;
+  border-radius: 14px;
+  background: #FFFFFF;
+}
+
+.bill-panel__head,
+.booking-panel__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 10px;
+
+  h4 {
+    margin: 3px 0 2px;
+    font-size: 15.5px;
+    color: #1F2329;
+  }
+
+  small {
+    font-size: 12px;
+    color: #5F6368;
+  }
+}
+
+.bill-status {
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.bill-status--under_budget,
+.bill-status--on_track { background: #E6F4EA; color: #137333; }
+.bill-status--over_budget { background: #FCE8E6; color: #C5221F; }
+
+.bill-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.bill-item {
+  padding: 10px 11px;
+  border: 1px solid #EEF1F5;
+  border-radius: 12px;
+  background: #F8FAFD;
+
+  small { font-size: 11px; color: #80868B; }
+}
+
+.bill-item__top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: #1F2329;
+}
+
+.source-pill {
+  font-size: 10px;
+  color: #0B57D0;
+  background: #E8F0FE;
+  padding: 1px 7px;
+  border-radius: 999px;
+}
+
+.bill-item__val {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin: 5px 0 4px;
+
+  strong { font-size: 14.5px; color: #1F2329; }
+  span { font-size: 11px; color: #5F6368; }
+}
+
+.bill-bar {
+  height: 4px;
+  background: #E5E9F0;
+  border-radius: 999px;
+  overflow: hidden;
+  margin-bottom: 4px;
+
+  i { display: block; height: 100%; background: #0B57D0; border-radius: 999px; }
+}
+
+.placeholder-badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: #B06000;
+  background: #FEF7E0;
+  border: 1px solid #FDE293;
+  padding: 3px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.booking-notice {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: #5F6368;
+}
+
+.booking-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.booking-col h5 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #3C4043;
+}
+
+.booking-card {
+  padding: 10px 12px;
+  border: 1px solid #E5E9F0;
+  border-radius: 12px;
+  background: #F8FAFD;
+  margin-bottom: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+
+  &:hover { border-color: #C2D7FA; background: #FFFFFF; }
+  &.active { border-color: #0B57D0; background: #F2F7FF; }
+
+  small {
+    display: block;
+    margin: 4px 0 6px;
+    font-size: 11px;
+    color: #5F6368;
+  }
+}
+
+.booking-card__top {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12.5px;
+  color: #1F2329;
+}
+
+.booking-tag {
+  font-size: 10.5px;
+  color: #0B57D0;
+  background: #E8F0FE;
+  padding: 1px 7px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.booking-card__foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11.5px;
+  color: #5F6368;
+
+  strong { color: #0B57D0; font-size: 13px; }
 }
 
 .inspiration-btn {
@@ -264,8 +778,9 @@ async function refreshWeather() {
 .day-weather-row {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
-  margin-bottom: 14px;
+  margin-bottom: 12px;
 }
 
 .weather-chip {
@@ -285,6 +800,69 @@ async function refreshWeather() {
   background: #E8F0FE;
   border-color: #D2E3FC;
   color: #0B57D0;
+}
+
+.optimize-route-btn {
+  border: 1px solid #C2D7FA;
+  background: #FFFFFF;
+  color: #0B57D0;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  &:hover:not(:disabled) { background: #E8F0FE; }
+  &:disabled { opacity: 0.6; cursor: not-allowed; }
+}
+
+.route-warning {
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: #FEF7E0;
+  border: 1px solid #FDE293;
+  color: #B06000;
+  font-size: 12px;
+}
+
+.transit-list {
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid #E5E9F0;
+  border-radius: 12px;
+  background: #F8FAFD;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.transit-list__title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #3C4043;
+}
+
+.transit-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  color: #5F6368;
+}
+
+.transit-route {
+  font-weight: 600;
+  color: #1F2329;
+}
+
+.transit-mode {
+  font-size: 11px;
+  font-weight: 600;
+  color: #0B57D0;
+  background: #E8F0FE;
+  padding: 1px 8px;
+  border-radius: 999px;
 }
 
 .plan-md {
@@ -443,6 +1021,13 @@ async function refreshWeather() {
     border-radius: 999px;
     font-size: 12px;
     font-weight: 500;
+  }
+}
+
+@media (max-width: 760px) {
+  .bill-grid,
+  .booking-cols {
+    grid-template-columns: 1fr;
   }
 }
 </style>
