@@ -3,7 +3,7 @@ import { ref, computed, watch, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { getCurrentUserId, saveAiPlan } from '@/api/user'
-import { createCommerceOrder, listCommerceOffers, payCommerceOrder, recordCommerceClick, type CommerceOffer } from '@/api/commerce'
+import { createCommerceOrder, listCommerceOffers, payCommerceOrder, recordCommerceClick, createBookingChecklist, confirmBookingItem, type CommerceOffer, type BookingChecklistItem } from '@/api/commerce'
 import { renderMarkdown as renderSafeMarkdown } from '@/utils/markdown'
 import { subscribeA2AStream, fetchPoiImages, type TravelPlan } from '@/api/agent'
 import {
@@ -20,7 +20,7 @@ import {
 import { useStreamStore } from '@/stores/stream'
 import { useUserStore } from '@/stores/user'
 import roamlySymbol from '@/assets/brand/logo-app-icon.png'
-import { formatCost, normalizeOptionalCost } from '@/utils/planValues'
+import { formatCost, formatActivityCost, normalizeOptionalCost } from '@/utils/planValues'
 
 const router = useRouter()
 const streamStore = useStreamStore()
@@ -92,8 +92,16 @@ const bookingPlaceholders = ref<BookingPlaceholderResponse | null>(null)
 const selectedTransportOfferId = ref('')
 const selectedHotelOfferId = ref('')
 const optimizingDay = ref(false)
+const bookingChecklist = ref<BookingChecklistItem[]>([])
+const bookingSubmitting = ref(false)
 
 const currentDayTransport = computed(() => transportPlan.value?.days?.[activeDay.value] || null)
+const selectedHotelNightlyRate = computed(() => {
+  const h = bookingPlaceholders.value?.hotelOptions?.find((x) => x.offerId === selectedHotelOfferId.value)
+    || bookingPlaceholders.value?.hotelOptions?.[1]
+    || bookingPlaceholders.value?.hotelOptions?.[0]
+  return h?.pricePerNight || null
+})
 
 function budgetHealthMeta(health?: string) {
   switch (health) {
@@ -185,6 +193,62 @@ function selectTransportOffer(offerId: string) {
 function selectHotelOffer(offerId: string) {
   selectedHotelOfferId.value = offerId
   void recalculateBillWithSelection()
+}
+
+async function submitBookingChecklist() {
+  if (!bookingPlaceholders.value || bookingSubmitting.value) return
+  const items: Array<{ category: string; offerId?: string; title: string; subtitle?: string; providerCode?: string; amount: number }> = []
+  const trans = bookingPlaceholders.value.transportOptions?.find((o) => o.offerId === selectedTransportOfferId.value)
+    || bookingPlaceholders.value.transportOptions?.[0]
+  if (trans) {
+    items.push({
+      category: trans.category || 'FLIGHT',
+      offerId: trans.offerId,
+      title: trans.title,
+      subtitle: `${trans.codeNo} · 去程 ${trans.outboundSchedule} · 返程 ${trans.returnSchedule}`,
+      providerCode: 'OTA_TRANSPORT_PLACEHOLDER',
+      amount: trans.totalPrice
+    })
+  }
+  const hotel = bookingPlaceholders.value.hotelOptions?.find((h) => h.offerId === selectedHotelOfferId.value)
+    || bookingPlaceholders.value.hotelOptions?.[0]
+  if (hotel) {
+    items.push({
+      category: 'HOTEL',
+      offerId: hotel.offerId,
+      title: hotel.name,
+      subtitle: `${hotel.checkInDate} ~ ${hotel.checkOutDate} · ${hotel.roomType} · ${hotel.nights}晚${hotel.rooms}间`,
+      providerCode: 'OTA_HOTEL_PLACEHOLDER',
+      amount: hotel.totalPrice
+    })
+  }
+  if (!items.length) return
+  bookingSubmitting.value = true
+  try {
+    const created = await createBookingChecklist({
+      destination: bookingPlaceholders.value.destination || destination.value.trim(),
+      planId: travelPlan.value?.planId || undefined,
+      startDate: bookingPlaceholders.value.startDate || startDate.value,
+      endDate: bookingPlaceholders.value.endDate,
+      items
+    })
+    bookingChecklist.value = created
+    ElMessage.success(`已加入预订清单（${created.length} 项），可在「我的旅程」与「个人主页」查看履约与分佣`)
+  } catch {
+    ElMessage.error('加入预订清单失败，请确认后端已启动')
+  } finally {
+    bookingSubmitting.value = false
+  }
+}
+
+async function confirmChecklistItem(bookingNo: string) {
+  try {
+    const updated = await confirmBookingItem(bookingNo)
+    bookingChecklist.value = bookingChecklist.value.map((item) => item.bookingNo === bookingNo ? updated : item)
+    ElMessage.success('已模拟确认预订，CPS 归因佣金已入账看板')
+  } catch {
+    ElMessage.error('确认预订失败，请稍后重试')
+  }
 }
 
 async function optimizeCurrentDayRoute() {
@@ -907,7 +971,12 @@ function getMealType(time: string): string {
               <span class="decision-kicker">机酒预订清单 · 点击切换实时重算账单</span>
               <h4>{{ bookingPlaceholders.departureCity }} ⇄ {{ bookingPlaceholders.destination }}（{{ bookingPlaceholders.startDate }} ~ {{ bookingPlaceholders.endDate }}）</h4>
             </div>
-            <span class="placeholder-badge">占位演示 · 未对接外部平台</span>
+            <div class="booking-panel__head-right">
+              <span class="placeholder-badge">占位演示 · 未对接外部平台</span>
+              <button type="button" class="checklist-add-btn" :disabled="bookingSubmitting" @click="submitBookingChecklist">
+                {{ bookingSubmitting ? '加入中…' : '🛒 一键加入预订清单' }}
+              </button>
+            </div>
           </div>
           <p class="booking-notice">{{ bookingPlaceholders.transportAdvice }} {{ bookingPlaceholders.notice }}</p>
           <div class="booking-cols">
@@ -949,6 +1018,25 @@ function getMealType(time: string): string {
                   <span>¥{{ hotel.pricePerNight }}/晚 × {{ hotel.nights }}晚 × {{ hotel.rooms }}间</span>
                   <strong>合计 ¥{{ hotel.totalPrice.toLocaleString() }}</strong>
                 </div>
+              </div>
+            </div>
+          </div>
+          <div v-if="bookingChecklist.length" class="checklist-created">
+            <div class="checklist-created__head">
+              <span>已生成预订清单（CPS 归因占位已绑定）</span>
+              <button type="button" class="advisor-link" @click="router.push('/profile')">去个人主页看分佣看板 →</button>
+            </div>
+            <div v-for="item in bookingChecklist" :key="item.bookingNo" class="checklist-item">
+              <div class="checklist-item__info">
+                <b>{{ item.title }}</b>
+                <small>{{ item.subtitle }} · 归因码 {{ item.attributionCode }} · 预估佣金 ¥{{ item.estimatedCommission }}</small>
+              </div>
+              <div class="checklist-item__act">
+                <strong>¥{{ item.amount.toLocaleString() }}</strong>
+                <span class="checklist-status" :class="'st--' + item.status.toLowerCase()">
+                  {{ item.status === 'CONFIRMED' ? '已确认' : item.status === 'CANCELLED' ? '已取消' : '待确认' }}
+                </span>
+                <button v-if="item.status === 'PENDING'" type="button" class="checklist-confirm-btn" @click="confirmChecklistItem(item.bookingNo)">模拟确认</button>
               </div>
             </div>
           </div>
@@ -1010,9 +1098,9 @@ function getMealType(time: string): string {
                     <div v-if="slot.location" class="itin-loc">📍 {{ slot.location }}</div>
                     <div v-if="slot.transport" class="itin-loc">↗ {{ slot.transport }}</div>
                     <div v-if="slot.notes" class="itin-note">{{ slot.notes }}</div>
-                    <div v-if="slot.cost != null || slot.duration" class="itin-meta">
+                    <div class="itin-meta">
                       <span v-if="slot.duration">⏱ {{ slot.duration }} 小时</span>
-                      <span>{{ formatCost(slot.cost) }}</span>
+                      <span>{{ formatActivityCost(slot, { hotelNightlyRate: selectedHotelNightlyRate }) }}</span>
                     </div>
                   </div>
                 </div>
@@ -2467,5 +2555,83 @@ function getMealType(time: string): string {
 .transit-tip {
   color: #80868b;
   font-size: 11.5px;
+}
+
+/* ─── 第三阶段：一键预订清单与 CPS 占位样式 ─── */
+.booking-panel__head-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.checklist-add-btn {
+  border: 0;
+  background: #0b57d0;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  &:hover:not(:disabled) { background: #0842a0; }
+  &:disabled { opacity: 0.6; cursor: not-allowed; }
+}
+.checklist-created {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #eef1f5;
+}
+.checklist-created__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #1f2329;
+}
+.checklist-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid #e5e9f0;
+  border-radius: 10px;
+  background: #f8fafd;
+  margin-bottom: 8px;
+}
+.checklist-item__info {
+  min-width: 0;
+  b { display: block; font-size: 13px; color: #1f2329; }
+  small { display: block; margin-top: 2px; font-size: 11.5px; color: #5f6368; }
+}
+.checklist-item__act {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  strong { font-size: 13.5px; color: #0b57d0; }
+}
+.checklist-status {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  &.st--pending { background: #fef7e0; color: #b06000; }
+  &.st--confirmed { background: #e6f4ea; color: #137333; }
+  &.st--cancelled { background: #f1f3f4; color: #5f6368; }
+}
+.checklist-confirm-btn {
+  border: 1px solid #0b57d0;
+  background: #ffffff;
+  color: #0b57d0;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  &:hover { background: #e8f0fe; }
 }
 </style>

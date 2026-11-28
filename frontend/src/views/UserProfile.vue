@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getPreferences, savePreferences, uploadAvatar, getAvatar, updateNickname, listPublicNotes, type UserPreference, type SocialNote } from '@/api/user'
+import { getCommercialSummary, confirmBookingItem, cancelBookingItem, type CommercialSummaryResponse } from '@/api/commerce'
 import { logout as apiLogout, sendEmailCode, bindEmail as apiBindEmail, unbindEmail as apiUnbindEmail } from '@/api/auth'
 import { applySystemPalette as applyPalette, parseSystemPalette } from '@/utils/theme'
 
@@ -11,7 +12,9 @@ const router = useRouter()
 const userStore = useUserStore()
 const saving = ref(false)
 const loaded = ref(false)
-const rightView = ref<'posts' | 'prefs'>('posts')
+const rightView = ref<'posts' | 'orders' | 'prefs'>('posts')
+const commercialSummary = ref<CommercialSummaryResponse | null>(null)
+const ordersLoading = ref(false)
 const rightPanelCollapsed = ref(false)
 const ownPosts = ref<SocialNote[]>([])
 const postsLoading = ref(false)
@@ -384,7 +387,56 @@ async function handleLogout() {
   } catch { /* 用户取消 */ }
 }
 
-onMounted(() => { loadSystemPalette(); load(); loadOwnPosts() })
+async function loadCommercialSummary() {
+  ordersLoading.value = true
+  try {
+    commercialSummary.value = await getCommercialSummary()
+  } catch {
+    commercialSummary.value = null
+  } finally {
+    ordersLoading.value = false
+  }
+}
+
+async function handleConfirmOrder(bookingNo: string) {
+  try {
+    await confirmBookingItem(bookingNo)
+    ElMessage.success('已模拟确认预订，CPS 归因数据已刷新')
+    await loadCommercialSummary()
+  } catch {
+    ElMessage.error('确认失败，请稍后重试')
+  }
+}
+
+async function handleCancelOrder(bookingNo: string) {
+  try {
+    await cancelBookingItem(bookingNo)
+    ElMessage.info('已取消该预订占位')
+    await loadCommercialSummary()
+  } catch {
+    ElMessage.error('取消失败，请稍后重试')
+  }
+}
+
+function bookingCategoryLabel(category: string) {
+  switch (category) {
+    case 'HOTEL': return '酒店住宿'
+    case 'FLIGHT': return '往返机票'
+    case 'HIGH_SPEED_RAIL': return '高铁动车'
+    case 'TICKET': return '景点门票'
+    default: return category || '旅行服务'
+  }
+}
+
+function bookingStatusLabel(status: string) {
+  switch (status) {
+    case 'CONFIRMED': return '已确认'
+    case 'CANCELLED': return '已取消'
+    default: return '待确认'
+  }
+}
+
+onMounted(() => { loadSystemPalette(); load(); loadOwnPosts(); loadCommercialSummary() })
 </script>
 
 <template>
@@ -564,6 +616,9 @@ onMounted(() => { loadSystemPalette(); load(); loadOwnPosts() })
             <button class="right-panel-tab" :class="{ active: rightView === 'posts' }" type="button" role="tab" :aria-selected="rightView === 'posts'" @click="rightView = 'posts'; rightPanelCollapsed = false">
               <span class="tab-mark">◈</span> 我的公开帖子 <small>{{ ownPosts.length }}</small>
             </button>
+            <button class="right-panel-tab" :class="{ active: rightView === 'orders' }" type="button" role="tab" :aria-selected="rightView === 'orders'" @click="rightView = 'orders'; rightPanelCollapsed = false; loadCommercialSummary()">
+              <span class="tab-mark">🛒</span> 订单与分佣 <small>{{ commercialSummary?.totalCount || 0 }}</small>
+            </button>
             <button class="right-panel-tab" :class="{ active: rightView === 'prefs' }" type="button" role="tab" :aria-selected="rightView === 'prefs'" @click="rightView = 'prefs'; rightPanelCollapsed = false">
               <span class="tab-mark">⚙</span> 旅行偏好
             </button>
@@ -576,7 +631,7 @@ onMounted(() => { loadSystemPalette(); load(); loadOwnPosts() })
         <section v-if="rightPanelCollapsed" class="right-panel-collapsed-card">
           <div>
             <p class="eyebrow">RIGHT PANEL</p>
-            <h3>{{ rightView === 'posts' ? '我的公开帖子' : '旅行偏好' }}</h3>
+            <h3>{{ rightView === 'posts' ? '我的公开帖子' : rightView === 'orders' ? '订单与 CPS 分佣看板' : '旅行偏好' }}</h3>
             <p>面板已收起，左侧资料卡和当前页面位置保持不变。</p>
           </div>
           <button type="button" @click="rightPanelCollapsed = false">展开内容 <span>→</span></button>
@@ -612,6 +667,71 @@ onMounted(() => { loadSystemPalette(); load(); loadOwnPosts() })
               </div>
             </article>
             <p v-if="!postsLoading && !ownPosts.length" class="profile-post-empty">还没有公开帖子，发布你的第一段旅程吧。</p>
+          </div>
+        </section>
+
+        <!-- 第三阶段：我的订单与 CPS 分佣看板 -->
+        <section v-else-if="rightView === 'orders'" class="panel orders-panel">
+          <div class="posts-panel-head">
+            <div>
+              <p class="eyebrow">COMMERCE &amp; CPS</p>
+              <h3>我的预订清单与 CPS 分佣看板</h3>
+              <p>展示由行程规划一键生成的机酒占位预订及 CPS 归因预估佣金（占位演示，未对接真实外部平台）。</p>
+            </div>
+            <button type="button" @click="router.push('/chat')">＋ 去规划新行程</button>
+          </div>
+
+          <div class="orders-kpi-grid">
+            <div class="orders-kpi">
+              <span>预订总数</span>
+              <b>{{ commercialSummary?.totalCount || 0 }}</b>
+              <small>待确认 {{ commercialSummary?.pendingCount || 0 }} · 已取消 {{ commercialSummary?.cancelledCount || 0 }}</small>
+            </div>
+            <div class="orders-kpi">
+              <span>已确认履约</span>
+              <b>{{ commercialSummary?.confirmedCount || 0 }}</b>
+              <small>已计入履约闭环</small>
+            </div>
+            <div class="orders-kpi">
+              <span>已确认 GMV</span>
+              <b>¥{{ (commercialSummary?.confirmedGmv || 0).toLocaleString() }}</b>
+              <small>占位模拟成交额</small>
+            </div>
+            <div class="orders-kpi orders-kpi--accent">
+              <span>预估 CPS 佣金</span>
+              <b>¥{{ (commercialSummary?.estimatedCommission || 0).toLocaleString() }}</b>
+              <small>酒店 6% · 门票 5% · 机票 1.2%</small>
+            </div>
+          </div>
+
+          <div v-loading="ordersLoading" class="orders-list">
+            <article v-for="item in (commercialSummary?.bookings || [])" :key="item.bookingNo" class="order-card">
+              <div class="order-card__top">
+                <div class="order-card__tags">
+                  <span class="order-cat">{{ bookingCategoryLabel(item.category) }}</span>
+                  <span class="order-dest">{{ item.destination }}</span>
+                  <span v-if="item.startDate" class="order-date">{{ item.startDate }} ~ {{ item.endDate || item.startDate }}</span>
+                </div>
+                <span class="order-status" :class="'st--' + item.status.toLowerCase()">{{ bookingStatusLabel(item.status) }}</span>
+              </div>
+              <h4>{{ item.title }}</h4>
+              <p class="order-sub">{{ item.subtitle || item.providerCode }}</p>
+              <div class="order-meta">
+                <span>订单号 {{ item.bookingNo }}</span>
+                <span>归因码 {{ item.attributionCode }}</span>
+                <span>费率 {{ (item.commissionRate * 100).toFixed(1) }}% · 预估佣金 ¥{{ item.estimatedCommission }}</span>
+              </div>
+              <div class="order-card__foot">
+                <strong>¥{{ item.amount.toLocaleString() }}</strong>
+                <div class="order-actions">
+                  <button v-if="item.status === 'PENDING'" type="button" class="order-btn order-btn--primary" @click="handleConfirmOrder(item.bookingNo)">模拟确认</button>
+                  <button v-if="item.status !== 'CANCELLED'" type="button" class="order-btn" @click="handleCancelOrder(item.bookingNo)">取消</button>
+                </div>
+              </div>
+            </article>
+            <p v-if="!ordersLoading && !(commercialSummary?.bookings?.length)" class="profile-post-empty">
+              还没有预订清单记录，前往「Agent 旅行规划」点击「一键加入预订清单」即可体验完整商业闭环。
+            </p>
           </div>
         </section>
 
@@ -1175,6 +1295,134 @@ onMounted(() => { loadSystemPalette(); load(); loadOwnPosts() })
   .right-panel-column { height: 720px; overflow: visible; }
   .right-panel-column.is-collapsed { height: auto; }
   .grid2, .grid3 { grid-template-columns: 1fr; }
+  .orders-kpi-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* 第三阶段：我的订单与 CPS 分佣看板 */
+.orders-panel {
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  background: var(--card);
+  box-shadow: var(--shadow-soft);
+}
+.orders-kpi-grid {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin: 16px 0 14px;
+}
+.orders-kpi {
+  padding: 12px 14px;
+  border: 1px solid #e5e9f0;
+  border-radius: 14px;
+  background: #f8fafd;
+  span { display: block; font-size: 11px; color: #5f6368; font-weight: 600; }
+  b { display: block; margin: 4px 0 2px; font-size: 20px; color: #1f2329; }
+  small { display: block; font-size: 10.5px; color: #80868b; }
+}
+.orders-kpi--accent {
+  background: #f2f7ff;
+  border-color: #c2d7fa;
+  b { color: #0b57d0; }
+}
+.orders-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-right: 4px;
+}
+.order-card {
+  padding: 14px 16px;
+  border: 1px solid #e5e9f0;
+  border-radius: 14px;
+  background: #ffffff;
+  h4 { margin: 8px 0 4px; font-size: 15px; color: #1f2329; }
+}
+.order-card__top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.order-card__tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.order-cat {
+  font-size: 11px;
+  font-weight: 700;
+  color: #0b57d0;
+  background: #e8f0fe;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.order-dest, .order-date {
+  font-size: 11.5px;
+  color: #5f6368;
+}
+.order-status {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 9px;
+  border-radius: 999px;
+  &.st--pending { background: #fef7e0; color: #b06000; }
+  &.st--confirmed { background: #e6f4ea; color: #137333; }
+  &.st--cancelled { background: #f1f3f4; color: #5f6368; }
+}
+.order-sub {
+  margin: 0 0 8px;
+  font-size: 12.5px;
+  color: #5f6368;
+}
+.order-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 11px;
+  color: #80868b;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #eef1f5;
+}
+.order-card__foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 10px;
+  strong { font-size: 16px; color: #0b57d0; }
+}
+.order-actions {
+  display: flex;
+  gap: 8px;
+}
+.order-btn {
+  border: 1px solid #dadce0;
+  background: #ffffff;
+  color: #3c4043;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  &:hover { background: #f0f4f9; }
+}
+.order-btn--primary {
+  border-color: #0b57d0;
+  background: #0b57d0;
+  color: #ffffff;
+  &:hover { background: #0842a0; }
 }
 </style>
 

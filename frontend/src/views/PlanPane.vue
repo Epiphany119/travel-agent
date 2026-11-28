@@ -13,7 +13,12 @@ import {
   type TransportEstimateResponse,
   type BookingPlaceholderResponse
 } from '@/api/planning'
-import { formatCost, normalizeOptionalCost } from '@/utils/planValues'
+import {
+  createBookingChecklist,
+  confirmBookingItem,
+  type BookingChecklistItem
+} from '@/api/commerce'
+import { formatCost, formatActivityCost, normalizeOptionalCost } from '@/utils/planValues'
 
 const agent = useAgentSessionStore()
 
@@ -38,8 +43,48 @@ const bookingPlaceholders = ref<BookingPlaceholderResponse | null>(null)
 const selectedTransportOfferId = ref('')
 const selectedHotelOfferId = ref('')
 const optimizingDay = ref(false)
+const creatingChecklist = ref(false)
+const createdBookings = ref<BookingChecklistItem[]>([])
 
 const currentDayTransport = computed(() => transportPlan.value?.days?.[agent.activeDay] || null)
+const selectedHotelNightlyRate = computed(() => {
+  const h = bookingPlaceholders.value?.hotelOptions?.find((x) => x.offerId === selectedHotelOfferId.value)
+  return h?.pricePerNight ?? bookingPlaceholders.value?.hotelOptions?.[1]?.pricePerNight ?? 380
+})
+
+async function submitBookingChecklist() {
+  if (!bookingPlaceholders.value || creatingChecklist.value) return
+  const t = bookingPlaceholders.value.transportOptions.find((x) => x.offerId === selectedTransportOfferId.value)
+  const h = bookingPlaceholders.value.hotelOptions.find((x) => x.offerId === selectedHotelOfferId.value)
+  const items: Array<{ category: string; offerId?: string; title: string; subtitle?: string; providerCode?: string; amount: number }> = []
+  if (t) items.push({ category: t.category, offerId: t.offerId, title: t.title, subtitle: `${t.codeNo} · ${t.outboundSchedule}`, providerCode: t.dataSource, amount: t.totalPrice })
+  if (h) items.push({ category: 'HOTEL', offerId: h.offerId, title: h.name, subtitle: `${h.checkInDate}~${h.checkOutDate} · ${h.roomType}`, providerCode: h.dataSource, amount: h.totalPrice })
+  if (!items.length) return
+  creatingChecklist.value = true
+  try {
+    createdBookings.value = await createBookingChecklist({
+      destination: bookingPlaceholders.value.destination,
+      startDate: bookingPlaceholders.value.startDate,
+      endDate: bookingPlaceholders.value.endDate,
+      items
+    })
+    ElMessage.success('已生成预订清单并写入 CPS 归因占位，可在「我的旅程」与「个人主页」查看')
+  } catch {
+    ElMessage.error('生成预订清单失败，请确认已登录且后端已重启')
+  } finally {
+    creatingChecklist.value = false
+  }
+}
+
+async function confirmChecklistItem(bookingNo: string) {
+  try {
+    const updated = await confirmBookingItem(bookingNo)
+    createdBookings.value = createdBookings.value.map((b) => (b.bookingNo === bookingNo ? updated : b))
+    ElMessage.success('已完成占位预订确认，佣金已计入个人中心看板')
+  } catch {
+    ElMessage.error('确认失败，请稍后重试')
+  }
+}
 
 function priceSourceLabel(source?: string) {
   switch (source) {
@@ -291,14 +336,19 @@ async function refreshWeather() {
       </div>
     </div>
 
-    <!-- 日期联动机酒占位预订清单 -->
+    <!-- 日期联动机酒占位预订清单 + 第三阶段一键下单/CPS 归因 -->
     <div v-if="bookingPlaceholders" class="booking-panel">
       <div class="booking-panel__head">
         <div>
           <span class="section-kicker">机酒预订清单 · 点击切换实时重算账单</span>
           <h4>{{ bookingPlaceholders.departureCity }} ⇄ {{ bookingPlaceholders.destination }}（{{ bookingPlaceholders.startDate }} ~ {{ bookingPlaceholders.endDate }}）</h4>
         </div>
-        <span class="placeholder-badge">占位演示 · 未对接外部平台</span>
+        <div class="booking-head-actions">
+          <span class="placeholder-badge">占位演示 · 未对接外部平台</span>
+          <button type="button" class="checklist-cta" :disabled="creatingChecklist" @click="submitBookingChecklist">
+            {{ creatingChecklist ? '生成中…' : '🛒 一键加入预订清单' }}
+          </button>
+        </div>
       </div>
       <p class="booking-notice">{{ bookingPlaceholders.transportAdvice }}</p>
       <div class="booking-cols">
@@ -341,6 +391,14 @@ async function refreshWeather() {
               <strong>合计 ¥{{ hotel.totalPrice.toLocaleString() }}</strong>
             </div>
           </div>
+        </div>
+      </div>
+      <div v-if="createdBookings.length" class="created-checklist">
+        <div class="created-checklist__title">已生成预订清单（已同步至「我的旅程」与「个人主页 · 订单与分佣」）</div>
+        <div v-for="bk in createdBookings" :key="bk.bookingNo" class="created-checklist__row">
+          <span><b>{{ bk.title }}</b> · ¥{{ Number(bk.amount).toLocaleString() }} · 预估 CPS 佣金 ¥{{ Number(bk.estimatedCommission).toFixed(2) }}</span>
+          <span class="bk-status" :class="'bk-status--' + bk.status.toLowerCase()">{{ bk.status === 'CONFIRMED' ? '已确认' : bk.status === 'CANCELLED' ? '已取消' : '待预订' }}</span>
+          <button v-if="bk.status === 'PENDING'" type="button" class="bk-confirm-btn" @click="confirmChecklistItem(bk.bookingNo)">模拟确认预订</button>
         </div>
       </div>
     </div>
@@ -392,7 +450,7 @@ async function refreshWeather() {
                 <span>{{ activity.time || '行程' }}</span>
                 <h4>{{ activity.name }}</h4>
                 <p>{{ activity.location || activity.notes }}</p>
-                <small>⏱ {{ activity.duration ? Math.round(activity.duration / 60) : 1 }} 小时 · {{ formatCost(activity.cost) }}</small>
+                <small>⏱ {{ activity.duration ? Math.round(activity.duration / 60) : 1 }} 小时 · {{ formatActivityCost(activity, { hotelNightlyRate: selectedHotelNightlyRate }) }}</small>
               </div>
             </article>
           </div>
@@ -1024,6 +1082,54 @@ async function refreshWeather() {
   }
 }
 
+.booking-head-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.checklist-cta {
+  border: 0;
+  background: #0B57D0;
+  color: #FFFFFF;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  &:hover:not(:disabled) { background: #0842A0; }
+  &:disabled { opacity: 0.6; cursor: not-allowed; }
+}
+.created-checklist {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #F4F8FF;
+  border: 1px solid #D2E3FC;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.created-checklist__title { font-size: 11.5px; font-weight: 700; color: #0B57D0; }
+.created-checklist__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: #1F2329;
+}
+.bk-status { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
+.bk-status--pending { background: #FEF7E0; color: #B06000; }
+.bk-status--confirmed { background: #E6F4EA; color: #137333; }
+.bk-status--cancelled { background: #EEF1F5; color: #5F6368; }
+.bk-confirm-btn {
+  border: 1px solid #0B57D0;
+  background: #FFFFFF;
+  color: #0B57D0;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  &:hover { background: #E8F0FE; }
+}
 @media (max-width: 760px) {
   .bill-grid,
   .booking-cols {

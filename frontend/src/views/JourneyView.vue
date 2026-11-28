@@ -8,6 +8,7 @@ import {
   saveJourneyPoints, saveJourneyImages, uploadImage, geocodeAddress,
   type JourneyDetail, type Journey, type JourneyPoint, type JourneyImage
 } from '@/api/user'
+import { listBookingItems, confirmBookingItem, type BookingChecklistItem } from '@/api/commerce'
 import { formatCost } from '@/utils/planValues'
 
 const router = useRouter()
@@ -239,8 +240,31 @@ const dateRange = (d?: JourneyDetail) => {
   return [startDate, endDate].filter(Boolean).join('  ~  ') || '—'
 }
 
+const bookings = ref<BookingChecklistItem[]>([])
+async function loadBookings() {
+  try {
+    bookings.value = await listBookingItems()
+  } catch {
+    bookings.value = []
+  }
+}
+function bookingsForJourney(destination?: string): BookingChecklistItem[] {
+  if (!destination) return []
+  const dest = destination.trim()
+  return bookings.value.filter((b) => b.destination && (b.destination.includes(dest) || dest.includes(b.destination)))
+}
+async function confirmJourneyBooking(bookingNo: string) {
+  try {
+    const updated = await confirmBookingItem(bookingNo)
+    bookings.value = bookings.value.map((b) => (b.bookingNo === bookingNo ? updated : b))
+    ElMessage.success('预订状态已更新为已确认')
+  } catch {
+    ElMessage.error('确认失败，请稍后重试')
+  }
+}
+
 onMounted(async () => {
-  await load()
+  await Promise.all([load(), loadBookings()])
   // 从地图点击「查看详情」回来时，自动打开对应旅程的详情弹窗
   const focusId = route.query.focus
   if (focusId) {
@@ -292,7 +316,15 @@ onMounted(async () => {
             </span>
             <span class="route-count">{{ d.points.length }} 站</span>
           </div>
-          <div class="actions">
+          <div v-if="bookingsForJourney(d.journey.destination).length" class="journey-bookings" @click.stop>
+            <div class="jb-title">关联预订履约（{{ bookingsForJourney(d.journey.destination).length }} 项）</div>
+            <div v-for="bk in bookingsForJourney(d.journey.destination).slice(0, 3)" :key="bk.bookingNo" class="jb-row">
+              <span class="jb-name">{{ bk.title }}</span>
+              <span class="jb-status" :class="'jb-status--' + bk.status.toLowerCase()">{{ bk.status === 'CONFIRMED' ? '已确认' : bk.status === 'CANCELLED' ? '已取消' : '待预订' }}</span>
+              <button v-if="bk.status === 'PENDING'" type="button" class="jb-confirm" @click.stop="confirmJourneyBooking(bk.bookingNo)">确认</button>
+            </div>
+          </div>
+          <div class="actions" @click.stop>
             <button class="ghost" @click="router.push(`/journey-map?journeyId=${d.journey.id}`)">🗺️ 地图</button>
             <button class="ghost" @click="openDetail(d)">查看行程</button>
             <button class="ghost" @click="openEdit(d)">编辑</button>
@@ -488,6 +520,16 @@ onMounted(async () => {
 .url-preview { display: flex; align-items: center; gap: 10px; margin-top: 8px; padding: 8px 10px; background: var(--wash); border-radius: 10px; }
 .url-preview img { width: 80px; height: 60px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); }
 .url-preview-hint { font-size: 11px; color: #8a9792; }
+.journey-bookings { margin: 0 0 12px; padding: 10px 12px; border-radius: 12px; background: #f8fafd; border: 1px solid #e5e9f0; display: flex; flex-direction: column; gap: 6px; }
+.jb-title { font-size: 11px; font-weight: 700; color: #0b57d0; }
+.jb-row { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #1f2329; }
+.jb-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.jb-status { font-size: 10.5px; font-weight: 700; padding: 2px 7px; border-radius: 999px; flex-shrink: 0; }
+.jb-status--pending { background: #fef7e0; color: #b06000; }
+.jb-status--confirmed { background: #e6f4ea; color: #137333; }
+.jb-status--cancelled { background: #eef1f5; color: #5f6368; }
+.jb-confirm { border: 1px solid #0b57d0; background: #fff; color: #0b57d0; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; cursor: pointer; }
+.jb-confirm:hover { background: #e8f0fe; }
 </style>
 
 <style scoped>
