@@ -96,8 +96,41 @@ public class BudgetMcpController {
 
         return switch (toolName) {
             case "budget.estimate" -> executeEstimate(arguments);
+            case "budget.recommend" -> executeRecommend(arguments);
             default -> McpToolResult.failure(toolName, "Unknown tool: " + toolName);
         };
+    }
+
+    @SuppressWarnings("unchecked")
+    private McpToolResult executeRecommend(Map<String, Object> arguments) {
+        Object daysObj = arguments.get("days");
+        Object citiesObj = arguments.get("cities");
+        String level = (String) arguments.get("level");
+        int travelers = arguments.get("travelers") instanceof Number n ? n.intValue() : 2;
+        int month = arguments.get("month") instanceof Number m ? m.intValue() : java.time.LocalDate.now().getMonthValue();
+
+        if (daysObj == null || citiesObj == null) {
+            return McpToolResult.failure("budget.recommend", "Missing required parameters: days or cities");
+        }
+        int days = daysObj instanceof Number n ? n.intValue() : Integer.parseInt(daysObj.toString());
+        List<String> cities = citiesObj instanceof List ? ((List<?>) citiesObj).stream().map(Object::toString).toList() : List.of(citiesObj.toString());
+
+        BudgetService.BudgetEstimate result = budgetService.estimateDetailed(days, cities, level, travelers, month);
+        if (!result.isSuccess()) {
+            return McpToolResult.failure("budget.recommend", result.getError());
+        }
+        return McpToolResult.success("budget.recommend", Map.of(
+                "days", result.getDays(),
+                "cities", result.getCities(),
+                "level", result.getLevel(),
+                "travelers", travelers,
+                "cityCoefficient", result.getCityCoefficient(),
+                "seasonMultiplier", result.getSeasonMultiplier(),
+                "totalCost", result.getTotalCost(),
+                "categories", result.getCategoryBreakdown(),
+                "currency", "CNY",
+                "dataSource", "CITY_BENCHMARK_PLACEHOLDER"
+        ));
     }
 
     @SuppressWarnings("unchecked")
@@ -139,9 +172,10 @@ public class BudgetMcpController {
                     "cityCoefficient", result.getCityCoefficient(),
                     "baseCost", result.getCostBreakdown(),
                     "totalCost", result.getTotalCost(),
+                    "categories", result.getCategoryBreakdown(),
                     "currency", "CNY",
                     "description", String.format(
-                            "根据您的%d天行程，游览%s等城市，选择%s消费水平，预计总费用约%.2f元（仅供参考，实际费用可能因个人习惯而有所不同）。",
+                            "根据您的%d天行程，游览%s等城市，选择%s消费水平，预计总费用约%.2f元（含往返大交通、住宿、餐饮、门票、市内交通及10%%机动预备金，仅供参考）。",
                             result.getDays(),
                             String.join("、", result.getCities()),
                             result.getLevel(),
@@ -155,11 +189,19 @@ public class BudgetMcpController {
 
     private List<McpTool> getToolsList() {
         return List.of(
-                new McpTool("budget.estimate", "估算旅行预算",
+                new McpTool("budget.estimate", "估算旅行预算（含六大类明细拆解）",
                         Map.of("type", "object", "properties", Map.of(
                                 "days", Map.of("type", "number", "description", "旅行天数"),
                                 "cities", Map.of("type", "array", "items", Map.of("type", "string"), "description", "目的地城市列表"),
                                 "level", Map.of("type", "string", "description", "消费水平：economy(经济)/standard(标准)/luxury(豪华)")
+                        ), "required", List.of("days", "cities"))),
+                new McpTool("budget.recommend", "基于城市物价基准和人数推荐六大类旅行预算",
+                        Map.of("type", "object", "properties", Map.of(
+                                "days", Map.of("type", "number", "description", "旅行天数"),
+                                "cities", Map.of("type", "array", "items", Map.of("type", "string"), "description", "目的地城市列表"),
+                                "travelers", Map.of("type", "number", "description", "同行人数"),
+                                "month", Map.of("type", "number", "description", "出行月份（1-12）"),
+                                "level", Map.of("type", "string", "description", "消费水平：economy/standard/luxury")
                         ), "required", List.of("days", "cities")))
         );
     }

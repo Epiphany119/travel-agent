@@ -1,11 +1,21 @@
 <script setup lang="ts">
-import { ref, computed, watch, reactive } from 'vue'
+import { ref, computed, watch, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { getCurrentUserId, saveAiPlan } from '@/api/user'
 import { createCommerceOrder, listCommerceOffers, payCommerceOrder, recordCommerceClick, type CommerceOffer } from '@/api/commerce'
 import { renderMarkdown as renderSafeMarkdown } from '@/utils/markdown'
 import { subscribeA2AStream, fetchPoiImages, type TravelPlan } from '@/api/agent'
+import {
+  recommendBudget,
+  calculateDetailedBill,
+  estimateTransport,
+  fetchBookingPlaceholders,
+  type BudgetRecommendResponse,
+  type DetailedBillResponse,
+  type TransportEstimateResponse,
+  type BookingPlaceholderResponse
+} from '@/api/planning'
 import { useStreamStore } from '@/stores/stream'
 import { useUserStore } from '@/stores/user'
 import roamlySymbol from '@/assets/brand/logo-app-icon.png'
@@ -56,12 +66,136 @@ function scrollToPlanner() {
   document.getElementById('planner')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
+const departureCity = ref('上海')
 const destination = ref('杭州')
 const days = ref(3)
 const budget = ref(3000)
 const travelers = ref(2)
 const travelStyle = ref('轻松漫游')
 const interests = ref(['美食', '人文'])
+
+// ─── 第一阶段商业闭环：当地物价预算推荐、六大类详细账单、距离交通与机酒占位 ───
+const budgetRec = ref<BudgetRecommendResponse | null>(null)
+const budgetRecLoading = ref(false)
+const showRecBreakdown = ref(false)
+const detailedBill = ref<DetailedBillResponse | null>(null)
+const transportPlan = ref<TransportEstimateResponse | null>(null)
+const bookingPlaceholders = ref<BookingPlaceholderResponse | null>(null)
+const selectedTransportOfferId = ref('')
+const selectedHotelOfferId = ref('')
+
+const currentDayTransport = computed(() => transportPlan.value?.days?.[activeDay.value] || null)
+
+function budgetHealthMeta(health?: string) {
+  switch (health) {
+    case 'AMPLE': return { label: '预算充裕', cls: 'tag--good' }
+    case 'BALANCED': return { label: '预算合理', cls: 'tag--good' }
+    case 'TIGHT': return { label: '略偏紧', cls: 'tag--warn' }
+    case 'INSUFFICIENT': return { label: '低于当地基准', cls: 'tag--danger' }
+    default: return { label: '参考估算', cls: 'tag--neutral' }
+  }
+}
+
+function priceSourceLabel(source?: string) {
+  switch (source) {
+    case 'ITINERARY_CONFIRMED': return '行程核验'
+    case 'PLACEHOLDER_QUOTE': return '占位报价'
+    case 'PLACEHOLDER_ROUTING': return '路径占位'
+    default: return '物价基准'
+  }
+}
+
+let recTimer: number | null = null
+async function loadBudgetRecommendation() {
+  if (!destination.value.trim()) return
+  budgetRecLoading.value = true
+  try {
+    budgetRec.value = await recommendBudget({
+      destination: destination.value.trim(),
+      departureCity: departureCity.value.trim(),
+      days: days.value,
+      travelers: travelers.value,
+      travelStyle: travelStyle.value,
+      budget: budget.value
+    })
+  } catch {
+    // 后端未重启时静默跳过，不影响原规划功能
+  } finally {
+    budgetRecLoading.value = false
+  }
+}
+
+function scheduleBudgetRec() {
+  if (recTimer) window.clearTimeout(recTimer)
+  recTimer = window.setTimeout(() => { void loadBudgetRecommendation() }, 260)
+}
+
+function applyRecommendedBudget() {
+  if (!budgetRec.value) return
+  budget.value = budgetRec.value.recommendedBudget
+  ElMessage.success(`已采纳当地推荐预算 ¥${budgetRec.value.recommendedBudget.toLocaleString()}`)
+}
+
+async function loadPhase1Enrichment(dayItems: any[][]) {
+  if (!dayItems.length) {
+    detailedBill.value = null
+    transportPlan.value = null
+    bookingPlaceholders.value = null
+    return
+  }
+  const flatActivities = dayItems.flat().map((a: any) => ({
+    type: a.type || 'sightseeing',
+    name: a.name || '',
+    cost: normalizeOptionalCost(a.cost)
+  }))
+  const dayStops = dayItems.map((items, idx) => ({
+    day: idx + 1,
+    stops: items.map((a: any) => ({
+      name: a.name || '待定地点',
+      location: a.location || '',
+      type: a.type || 'sightseeing'
+    }))
+  }))
+
+  const [billRes, transRes, bookRes] = await Promise.allSettled([
+    calculateDetailedBill({
+      destination: destination.value.trim(),
+      departureCity: departureCity.value.trim(),
+      days: days.value,
+      travelers: travelers.value,
+      travelStyle: travelStyle.value,
+      userBudget: budget.value,
+      activities: flatActivities
+    }),
+    estimateTransport({
+      destination: destination.value.trim(),
+      days: dayStops
+    }),
+    fetchBookingPlaceholders({
+      departureCity: departureCity.value.trim(),
+      destination: destination.value.trim(),
+      days: days.value,
+      travelers: travelers.value,
+      travelStyle: travelStyle.value,
+      budget: budget.value
+    })
+  ])
+
+  if (billRes.status === 'fulfilled') detailedBill.value = billRes.value
+  if (transRes.status === 'fulfilled') transportPlan.value = transRes.value
+  if (bookRes.status === 'fulfilled') {
+    bookingPlaceholders.value = bookRes.value
+    if (!selectedTransportOfferId.value && bookRes.value.transportOptions?.length) {
+      selectedTransportOfferId.value = bookRes.value.transportOptions[0].offerId
+    }
+    if (!selectedHotelOfferId.value && bookRes.value.hotelOptions?.length) {
+      selectedHotelOfferId.value = bookRes.value.hotelOptions[1]?.offerId || bookRes.value.hotelOptions[0].offerId
+    }
+  }
+}
+
+watch([departureCity, destination, days, travelers, travelStyle, budget], scheduleBudgetRec)
+onMounted(() => { void loadBudgetRecommendation() })
 const travelPlan = ref<TravelPlan | null>(null)
 const activeDay = ref(0)
 const globalWeather = ref<any>(null)
@@ -260,13 +394,14 @@ function fallbackPlanText(planDays: any[]) {
   }).join('\n\n')
 }
 
-// 行程就绪后，按地点/餐厅名称懒加载图片
-watch(() => structuredDays.value, (days) => {
-  for (const items of days) {
+// 行程就绪后，按地点/餐厅名称懒加载图片，并同步触发第一阶段账单/交通/机酒占位计算
+watch(() => structuredDays.value, (dayList) => {
+  for (const items of dayList) {
     for (const it of items) {
       if (it.name) loadImages(it.name, destination.value)
     }
   }
+  void loadPhase1Enrichment(dayList)
 })
 
 let cancelStream: (() => void) | null = null
@@ -464,6 +599,10 @@ function getMealType(time: string): string {
       </div>
 
       <div class="form-grid">
+        <label class="field">
+          <span>出发城市</span>
+          <input v-model="departureCity" maxlength="20" placeholder="例如：上海" />
+        </label>
         <label class="field destination">
           <span>目的地</span>
           <input v-model="destination" maxlength="30" placeholder="例如：杭州" />
@@ -516,6 +655,45 @@ function getMealType(time: string): string {
               :class="{ selected: interests.includes(item) }"
               @click="interests.includes(item) ? interests = interests.filter(x => x !== item) : interests = [...interests, item]"
             >{{ item }}</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 第一阶段：当地物价基准与智能预算推荐 -->
+      <div v-if="budgetRec" class="budget-advisor">
+        <div class="budget-advisor__top">
+          <div class="budget-advisor__meta">
+            <span class="advisor-tag">{{ budgetRec.tierLabel }}</span>
+            <span class="advisor-health" :class="budgetHealthMeta(budgetRec.budgetHealth).cls">
+              {{ budgetHealthMeta(budgetRec.budgetHealth).label }}
+            </span>
+            <span class="advisor-range">
+              当地推荐预算 <b>¥{{ budgetRec.minBudget.toLocaleString() }} – ¥{{ budgetRec.maxBudget.toLocaleString() }}</b>
+              （人均约 ¥{{ budgetRec.perPersonBudget.toLocaleString() }}）
+            </span>
+          </div>
+          <div class="budget-advisor__btns">
+            <button type="button" class="advisor-link" @click="showRecBreakdown = !showRecBreakdown">
+              {{ showRecBreakdown ? '收起六大类明细' : '查看六大类拆解' }}
+            </button>
+            <button
+              v-if="budget !== budgetRec.recommendedBudget"
+              type="button"
+              class="advisor-apply"
+              @click="applyRecommendedBudget"
+            >
+              采纳推荐 ¥{{ budgetRec.recommendedBudget.toLocaleString() }}
+            </button>
+          </div>
+        </div>
+        <p class="budget-advisor__advice">{{ budgetRec.advice }}</p>
+        <div v-if="showRecBreakdown" class="advisor-grid">
+          <div v-for="cat in budgetRec.categories" :key="cat.code" class="advisor-cat">
+            <div class="advisor-cat__row">
+              <span>{{ cat.label }}</span>
+              <b>¥{{ cat.amount.toLocaleString() }}</b>
+            </div>
+            <small>{{ cat.note }} · 占 {{ cat.ratio }}%</small>
           </div>
         </div>
       </div>
@@ -612,6 +790,88 @@ function getMealType(time: string): string {
           <p>每天安排 2–4 个核心地点，优先按区域串联；你可以直接按时间轴出发，也可以替换任意一个地点。</p>
         </div>
 
+        <!-- 第一阶段：六大类详细账单核算 -->
+        <div v-if="detailedBill" class="bill-panel">
+          <div class="bill-panel__head">
+            <div>
+              <span class="decision-kicker">六大类详细账单核算</span>
+              <h4>预计总花费 ¥{{ detailedBill.totalEstimatedCost.toLocaleString() }}</h4>
+              <small>人均 ¥{{ detailedBill.perPersonCost.toLocaleString() }} · 日均 ¥{{ detailedBill.perDayCost.toLocaleString() }} · 预算使用率 {{ detailedBill.utilizationRate }}%</small>
+            </div>
+            <span class="bill-status" :class="'bill-status--' + detailedBill.status.toLowerCase()">
+              {{ detailedBill.status === 'OVER_BUDGET' ? '超出预算 ¥' + Math.abs(detailedBill.deltaFromBudget).toLocaleString() : '预算结余 ¥' + Math.max(0, detailedBill.deltaFromBudget).toLocaleString() }}
+            </span>
+          </div>
+          <div class="bill-grid">
+            <div v-for="cat in detailedBill.categories" :key="cat.code" class="bill-item">
+              <div class="bill-item__top">
+                <b>{{ cat.label }}</b>
+                <span class="source-pill">{{ priceSourceLabel(cat.priceSource) }}</span>
+              </div>
+              <div class="bill-item__val">
+                <strong>¥{{ cat.amount.toLocaleString() }}</strong>
+                <span>{{ cat.ratio }}%</span>
+              </div>
+              <div class="bill-bar"><i :style="{ width: Math.min(100, cat.ratio) + '%' }"></i></div>
+              <small>{{ cat.note }}</small>
+            </div>
+          </div>
+        </div>
+
+        <!-- 第一阶段：机票/高铁与酒店预订清单（占位） -->
+        <div v-if="bookingPlaceholders" class="booking-panel">
+          <div class="booking-panel__head">
+            <div>
+              <span class="decision-kicker">机酒预订清单 · 第一阶段占位</span>
+              <h4>{{ bookingPlaceholders.departureCity }} ⇄ {{ bookingPlaceholders.destination }} 配套方案</h4>
+            </div>
+            <span class="placeholder-badge">占位演示 · 未对接外部平台</span>
+          </div>
+          <p class="booking-notice">{{ bookingPlaceholders.notice }}</p>
+          <div class="booking-cols">
+            <div class="booking-col">
+              <h5>往返大交通（机票 / 高铁占位）</h5>
+              <div
+                v-for="opt in bookingPlaceholders.transportOptions"
+                :key="opt.offerId"
+                class="booking-card"
+                :class="{ active: selectedTransportOfferId === opt.offerId }"
+                @click="selectedTransportOfferId = opt.offerId"
+              >
+                <div class="booking-card__top">
+                  <b>{{ opt.title }}</b>
+                  <span class="booking-tag">{{ opt.tag }}</span>
+                </div>
+                <small>{{ opt.carrier }} · {{ opt.scheduleSummary }}</small>
+                <div class="booking-card__foot">
+                  <span>单人参考 ¥{{ opt.unitPrice.toLocaleString() }}</span>
+                  <strong>合计 ¥{{ opt.totalPrice.toLocaleString() }}</strong>
+                </div>
+              </div>
+            </div>
+            <div class="booking-col">
+              <h5>推荐住宿（商圈酒店占位）</h5>
+              <div
+                v-for="hotel in bookingPlaceholders.hotelOptions"
+                :key="hotel.offerId"
+                class="booking-card"
+                :class="{ active: selectedHotelOfferId === hotel.offerId }"
+                @click="selectedHotelOfferId = hotel.offerId"
+              >
+                <div class="booking-card__top">
+                  <b>{{ hotel.name }}</b>
+                  <span class="booking-tag">★ {{ hotel.rating }}</span>
+                </div>
+                <small>{{ hotel.area }} · {{ hotel.roomType }}</small>
+                <div class="booking-card__foot">
+                  <span>¥{{ hotel.pricePerNight }}/晚 × {{ hotel.nights }}晚 × {{ hotel.rooms }}间</span>
+                  <strong>合计 ¥{{ hotel.totalPrice.toLocaleString() }}</strong>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- 按天 Tabs -->
         <div class="day-tabs">
           <div class="tab-bar">
@@ -634,30 +894,45 @@ function getMealType(time: string): string {
                 <span>💰</span>
                 <span>¥{{ dayTabs[activeDay].budget }}</span>
               </div>
+              <div v-if="currentDayTransport" class="weather-chip">
+                <span>🗺</span>
+                <span>当日通勤约 {{ currentDayTransport.totalDistanceKm }} km · {{ currentDayTransport.totalDurationMinutes }} 分钟 · 交通约 ¥{{ currentDayTransport.totalTransitCost }}</span>
+              </div>
+            </div>
+            <div v-if="currentDayTransport?.routeWarning" class="route-warning">
+              ⚠️ {{ currentDayTransport.routeWarning }}
             </div>
 
-            <!-- 结构化行程卡：地点橙色、地点/餐厅左侧配图 -->
+            <!-- 结构化行程卡 + 景点间距离与交通规划衔接条 -->
             <div v-if="structuredDays[activeDay]?.length" class="itin-cards">
-              <div v-for="(slot, si) in structuredDays[activeDay]" :key="si"
-                   class="itin-card" :class="'itin-card--' + slot.type">
-                <div v-if="imagesOf(slot.name)[0]" class="itin-photo">
-                  <img :src="imagesOf(slot.name)[0]" :alt="slot.name" loading="lazy"
-                       referrerpolicy="no-referrer" @error="onImgError(slot.name)" />
-                </div>
-                <div class="itin-info">
-                  <div class="itin-title">
-                    <span v-if="slot.time" class="itin-time">{{ slot.time }}</span>
-                    <h4 :class="slot.type === 'sightseeing' ? 'itin-place' : 'itin-food'">{{ slot.name }}</h4>
+              <template v-for="(slot, si) in structuredDays[activeDay]" :key="si">
+                <div class="itin-card" :class="'itin-card--' + slot.type">
+                  <div v-if="imagesOf(slot.name)[0]" class="itin-photo">
+                    <img :src="imagesOf(slot.name)[0]" :alt="slot.name" loading="lazy"
+                         referrerpolicy="no-referrer" @error="onImgError(slot.name)" />
                   </div>
-                  <div v-if="slot.location" class="itin-loc">📍 {{ slot.location }}</div>
-                  <div v-if="slot.transport" class="itin-loc">↗ {{ slot.transport }}</div>
-                  <div v-if="slot.notes" class="itin-note">{{ slot.notes }}</div>
-                  <div v-if="slot.cost != null || slot.duration" class="itin-meta">
-                    <span v-if="slot.duration">⏱ {{ slot.duration }} 小时</span>
-                    <span>{{ formatCost(slot.cost) }}</span>
+                  <div class="itin-info">
+                    <div class="itin-title">
+                      <span v-if="slot.time" class="itin-time">{{ slot.time }}</span>
+                      <h4 :class="slot.type === 'sightseeing' ? 'itin-place' : 'itin-food'">{{ slot.name }}</h4>
+                    </div>
+                    <div v-if="slot.location" class="itin-loc">📍 {{ slot.location }}</div>
+                    <div v-if="slot.transport" class="itin-loc">↗ {{ slot.transport }}</div>
+                    <div v-if="slot.notes" class="itin-note">{{ slot.notes }}</div>
+                    <div v-if="slot.cost != null || slot.duration" class="itin-meta">
+                      <span v-if="slot.duration">⏱ {{ slot.duration }} 小时</span>
+                      <span>{{ formatCost(slot.cost) }}</span>
+                    </div>
                   </div>
                 </div>
-              </div>
+                <div v-if="currentDayTransport?.segments?.[si]" class="transit-connector">
+                  <span class="transit-mode">{{ currentDayTransport.segments[si].recommendedMode }}</span>
+                  <span>约 {{ currentDayTransport.segments[si].distanceKm }} km</span>
+                  <span>· {{ currentDayTransport.segments[si].durationMinutes }} 分钟</span>
+                  <span>· 预计 ¥{{ currentDayTransport.segments[si].estimatedFare }}</span>
+                  <small class="transit-tip">{{ currentDayTransport.segments[si].tip }}</small>
+                </div>
+              </template>
             </div>
 
             <!-- 当天详细行程（从完整行程按「第N天」拆分到当前 tab） -->
@@ -872,7 +1147,7 @@ function getMealType(time: string): string {
 
 .form-grid {
   display: grid;
-  grid-template-columns: 1.6fr repeat(3, 1fr);
+  grid-template-columns: 1.1fr 1.2fr repeat(3, 1fr);
   gap: 12px;
   margin: 20px 0;
 }
@@ -1808,5 +2083,276 @@ function getMealType(time: string): string {
   .itin-photo { width: 100%; min-width: 100%; min-height: 120px; }
   .itin-photo img { min-height: 120px; }
   .itin-photo + .itin-info { padding: 10px 14px 14px; }
+  .booking-cols, .bill-grid, .advisor-grid { grid-template-columns: 1fr; }
+}
+
+/* ─── 第一阶段：当地物价预算推荐、六大类账单、机酒占位与交通衔接条 ─── */
+.budget-advisor {
+  margin-top: 18px;
+  padding: 14px 16px;
+  border: 1px solid #dce5f2;
+  border-radius: 14px;
+  background: #f8fafd;
+}
+.budget-advisor__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.budget-advisor__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: #3c4043;
+}
+.advisor-tag {
+  font-size: 11px;
+  font-weight: 700;
+  color: #0b57d0;
+  background: #e8f0fe;
+  padding: 2px 9px;
+  border-radius: 999px;
+}
+.advisor-health {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 9px;
+  border-radius: 999px;
+}
+.advisor-health.tag--good { background: #e6f4ea; color: #137333; }
+.advisor-health.tag--warn { background: #fef7e0; color: #b06000; }
+.advisor-health.tag--danger { background: #fce8e6; color: #c5221f; }
+.advisor-health.tag--neutral { background: #eef1f5; color: #5f6368; }
+.advisor-range b { color: #1f2329; }
+.budget-advisor__btns {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.advisor-link {
+  border: 0;
+  background: transparent;
+  color: #0b57d0;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+.advisor-apply {
+  border: 1px solid #c2d7fa;
+  background: #ffffff;
+  color: #0b57d0;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  &:hover { background: #e8f0fe; }
+}
+.budget-advisor__advice {
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  color: #5f6368;
+  line-height: 1.55;
+}
+.advisor-grid {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #e5e9f0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.advisor-cat {
+  background: #ffffff;
+  border: 1px solid #e5e9f0;
+  border-radius: 10px;
+  padding: 9px 11px;
+}
+.advisor-cat__row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12.5px;
+  color: #1f2329;
+}
+.advisor-cat small {
+  display: block;
+  margin-top: 3px;
+  font-size: 11px;
+  color: #80868b;
+}
+
+.bill-panel, .booking-panel {
+  margin: 0 20px 16px;
+  padding: 16px 18px;
+  border: 1px solid #e5e9f0;
+  border-radius: 14px;
+  background: #ffffff;
+}
+.bill-panel__head, .booking-panel__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.bill-panel__head h4, .booking-panel__head h4 {
+  margin: 3px 0 2px;
+  font-size: 16px;
+  color: #1f2329;
+}
+.bill-panel__head small { font-size: 12px; color: #5f6368; }
+.bill-status {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 12px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.bill-status--under_budget, .bill-status--on_track { background: #e6f4ea; color: #137333; }
+.bill-status--over_budget { background: #fce8e6; color: #c5221f; }
+.bill-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.bill-item {
+  padding: 11px 12px;
+  border: 1px solid #eef1f5;
+  border-radius: 12px;
+  background: #f8fafd;
+}
+.bill-item__top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12.5px;
+  color: #1f2329;
+}
+.source-pill {
+  font-size: 10.5px;
+  color: #0b57d0;
+  background: #e8f0fe;
+  padding: 1px 7px;
+  border-radius: 999px;
+}
+.bill-item__val {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin: 6px 0 5px;
+}
+.bill-item__val strong { font-size: 15px; color: #1f2329; }
+.bill-item__val span { font-size: 11.5px; color: #5f6368; }
+.bill-bar {
+  height: 5px;
+  background: #e5e9f0;
+  border-radius: 999px;
+  overflow: hidden;
+  margin-bottom: 5px;
+  i { display: block; height: 100%; background: #0b57d0; border-radius: 999px; }
+}
+.bill-item small { font-size: 11px; color: #80868b; }
+
+.placeholder-badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: #b06000;
+  background: #fef7e0;
+  border: 1px solid #fde293;
+  padding: 3px 10px;
+  border-radius: 999px;
+}
+.booking-notice {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: #5f6368;
+}
+.booking-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+.booking-col h5 {
+  margin: 0 0 8px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #3c4043;
+}
+.booking-card {
+  padding: 11px 13px;
+  border: 1px solid #e5e9f0;
+  border-radius: 12px;
+  background: #f8fafd;
+  margin-bottom: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+  &:hover { border-color: #c2d7fa; background: #ffffff; }
+  &.active { border-color: #0b57d0; background: #f2f7ff; }
+}
+.booking-card__top {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  color: #1f2329;
+}
+.booking-tag {
+  font-size: 11px;
+  color: #0b57d0;
+  background: #e8f0fe;
+  padding: 1px 7px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+.booking-card small {
+  display: block;
+  margin: 4px 0 6px;
+  font-size: 11.5px;
+  color: #5f6368;
+}
+.booking-card__foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: #5f6368;
+  strong { color: #0b57d0; font-size: 13.5px; }
+}
+
+.route-warning {
+  margin-bottom: 12px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: #fef7e0;
+  border: 1px solid #fde293;
+  color: #b06000;
+  font-size: 12.5px;
+}
+.transit-connector {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: -4px 0 -4px 20px;
+  padding: 6px 12px;
+  border-left: 2px dashed #c2d7fa;
+  font-size: 12px;
+  color: #5f6368;
+}
+.transit-mode {
+  font-weight: 600;
+  color: #0b57d0;
+  background: #e8f0fe;
+  padding: 1px 8px;
+  border-radius: 999px;
+}
+.transit-tip {
+  color: #80868b;
+  font-size: 11.5px;
 }
 </style>
